@@ -1,0 +1,13 @@
+node_modules/
+desktop/node_modules/
+desktop/dist/
+dist/
+.data/
+.env
+.git/
+.gitignore
+.DS_Store
+*.log
+npm-debug.log*
+coverage/
+SRS.docx

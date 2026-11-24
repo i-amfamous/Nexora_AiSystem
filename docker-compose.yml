@@ -1,0 +1,80 @@
+# Nexora deployment topology.
+#
+# The app uses the tenant-scoped PostgresStore when DATA_STORE=postgres and
+# DATABASE_URL is set; otherwise it uses the file-backed Store. Both paths use
+# the in-process, store-persisted JobQueue. Apply db/schema.sql with the one-shot
+# migrate service before starting the backend in postgres mode. Validate the
+# PostgreSQL adapter in staging before production. Redis/BullMQ is not wired.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexora
+      POSTGRES_PASSWORD: nexora
+      POSTGRES_DB: nexora
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora -d nexora"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # One-shot schema apply. Uses psql INSIDE the postgres image, so no PostgreSQL
+  # client is needed on the host. Run explicitly:
+  #   docker compose --profile migrate run --rm migrate
+  migrate:
+    image: postgres:16-alpine
+    profiles: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://nexora:nexora@postgres:5432/nexora
+    volumes:
+      - ./db/schema.sql:/schema.sql:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql \"$$DATABASE_URL\" -v ON_ERROR_STOP=1 -f /schema.sql"]
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      HOST: 0.0.0.0
+      PUBLIC_URL: http://localhost:4000
+      # Default to local file storage. Set DATA_STORE=postgres after applying
+      # the migration to use the PostgreSQL container as the live store.
+      DATA_STORE: ${DATA_STORE:-file}
+      DATA_FILE: /app/.data/nexora.json
+      DATABASE_URL: postgresql://nexora:nexora@postgres:5432/nexora
+      SESSION_SECRET: ${SESSION_SECRET:-replace-with-a-long-random-secret}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-replace-with-provider-webhook-secret}
+      SEED_PASSWORD: ${SEED_PASSWORD:-redacted-password}
+      QUEUE_DRIVER: memory
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4000}
+    ports:
+      - "4000:4000"
+    volumes:
+      - nexora-data:/app/.data
+
+  # Optional - enable only when a Redis/BullMQ adapter is implemented (not yet).
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+
+volumes:
+  postgres-data:
+  nexora-data:

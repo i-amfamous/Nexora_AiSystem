@@ -4,6 +4,109 @@
 
   var levelNames = { suggest: 'Suggest only', approve: 'Prepare for approval', execute: 'Execute permitted actions' };
   var levelDesc = { suggest: 'Recommends actions. Never acts on its own.', approve: 'Prepares actions for a person to approve.', execute: 'Carries out low-risk actions within its permissions.' };
+  /* The API stores "prepare" for the UI's "approve" level. */
+  function displayLevel(level) { return level === 'prepare' ? 'approve' : level; }
+
+  var TRIGGER_KEYS = {
+    'New customer created': 'customer.created', 'New message received': 'message.received',
+    'New order created': 'order.created', 'Order status changed': 'order.status_changed',
+    'Stock threshold reached': 'stock.threshold', 'Invoice created': 'invoice.created',
+    'Payment status changed': 'payment.status_changed', 'Task deadline reached': 'task.deadline',
+    'Scheduled event: daily 08:00': 'scheduled.daily'
+  };
+  var CONDITION_KEYS = {
+    'Customer category': 'category', 'Order value': 'total', 'Stock quantity': 'quantity',
+    'Employee assignment': 'who', 'Invoice status': 'status', 'Message category': 'category',
+    'Channel': 'channel', 'Task status': 'status', 'Payment': 'verified'
+  };
+  var OPERATOR_KEYS = { 'is': 'equals', 'is not': 'notEquals', 'is above': 'greaterThan', 'is below': 'lessThan', 'contains': 'contains' };
+  var ACTION_KEYS = {
+    'Create a task': 'create_task', 'Create a task for account owner': 'create_task', 'Create a task: credit check': 'create_task',
+    'Assign conversation to Sales team': 'assign_conversation', 'Send notification to Business owner': 'notify',
+    'Notify department manager': 'notify', 'Update record field': 'notify',
+    'Prepare approval request for Department manager': 'notify', 'Send authorised message in original channel': 'notify',
+    'Trigger Sales Agent': 'trigger_agent', 'Trigger Inventory Agent: prepare purchase request': 'trigger_agent',
+    'Trigger Finance Assistant: prepare reminder': 'trigger_agent', 'Trigger Operations Assistant': 'trigger_agent'
+  };
+  var TOOL_KEYS = {
+    'products.search': 'get_product_availability', 'inventory.check_availability': 'get_product_availability',
+    'orders.get': 'get_order', 'customers.get': 'get_customer', 'inventory.list': 'list_low_stock',
+    'movements.list': 'list_low_stock', 'invoices.list': 'get_finance_summary', 'payments.list': 'get_finance_summary',
+    'expenses.list': 'get_finance_summary', 'tasks.list': 'get_task_summary', 'tasks.create': 'create_task',
+    'analytics.query': 'get_analytics', 'purchase_requests.create_draft': 'prepare_purchase_request',
+    'reminders.prepare': 'get_finance_summary'
+  };
+  function agentIdFor(label) {
+    if (/Inventory/i.test(label)) return 'inventory';
+    if (/Sales/i.test(label)) return 'sales';
+    if (/Finance/i.test(label)) return 'finance';
+    if (/Operations/i.test(label)) return 'ops';
+    return 'support';
+  }
+  function workflowPayload(d) {
+    var conditions = (d.conds || []).filter(function (c) { return c[0]; }).map(function (c) {
+      return { field: CONDITION_KEYS[c[0]] || String(c[0]).toLowerCase().replace(/\s+/g, '_'), operator: OPERATOR_KEYS[c[1]] || 'equals', value: c[2] };
+    });
+    var labels = (d.actions || []).filter(Boolean);
+    var actions = labels.map(function (label) {
+      var type = ACTION_KEYS[label] || 'notify';
+      var action = { type: type, title: label, who: 'e1' };
+      if (type === 'trigger_agent') action.agentId = agentIdFor(label);
+      if (type === 'create_task') { action.due = 'Today'; action.priority = 'Normal'; }
+      if (type === 'notify') { action.body = label; action.go = '#/automation'; }
+      return action;
+    });
+    return {
+      name: d.name, label: d.name, trigger: d.trigger, conds: (d.conds || []).filter(function (c) { return c[0]; }),
+      conditions: conditions, actions: actions, labels: labels, active: d.on !== false, on: d.on !== false,
+      approval: !!d.approval, runs: d.runs || 0, ok: d.ok || 0, last: d.last || 'Never'
+    };
+  }
+
+  var PREF_ROWS = [
+    ['New customer messages assigned to me', 'assignment'], ['Approval requests', 'approval'],
+    ['Task assigned or overdue', 'assignment'], ['Low-stock alerts', 'stock'],
+    ['Order updates', 'inApp'], ['Payment status changes', 'inApp'],
+    ['Workflow failures', 'workflowFailure'], ['AI escalations', 'approval'],
+    ['Integration problems', 'workflowFailure']
+  ];
+  var RETENTION_DAYS = { '1 year': 365, '2 years': 730, '3 years': 1095, '7 years': 2555, 'Until deleted': 0 };
+
+  function loadPreferences() {
+    if (A.state.prefsLoaded) return;
+    A.state.prefsLoaded = true;
+    NXApi.request('GET', '/notifications/preferences').then(function (prefs) {
+      NXApi.applyBootstrap({ notificationPreferences: prefs });
+      if (A.route().page === 'settings' && A.route().sub === 'notifications') A.render();
+    }).catch(function (error) {
+      A.state.prefsLoaded = false;
+      UI.toast((error && error.message) || 'Could not load notification preferences');
+    });
+  }
+
+  function loadRetention() {
+    if (A.state.retentionLoaded) return;
+    A.state.retentionLoaded = true;
+    NXApi.request('GET', '/data/retention').then(function (policy) {
+      NXApi.applyBootstrap({ business: Object.assign({}, NX.business, { retentionPolicy: policy }) });
+      if (A.route().page === 'settings' && A.route().sub === 'data') A.render();
+    }).catch(function (error) {
+      A.state.retentionLoaded = false;
+      UI.toast((error && error.message) || 'Could not load retention settings');
+    });
+  }
+
+  function samplePayload(conds) {
+    var payload = {};
+    (conds || []).forEach(function (c) {
+      if (!c[0]) return;
+      var field = CONDITION_KEYS[c[0]] || String(c[0]).toLowerCase().replace(/\s+/g, '_');
+      var value = String(c[2] === undefined ? '' : c[2]);
+      if (/[\d]/.test(value)) value = value.replace(/[^\d.-]/g, '');
+      payload[field] = (c[1] === 'is above' || c[1] === 'is below') ? (Number(value) || 0) : value;
+    });
+    return payload;
+  }
 
   /* ================= Automation ================= */
   var TRIGGERS = ['New customer created', 'New message received', 'New order created', 'Order status changed', 'Stock threshold reached', 'Invoice created', 'Payment status changed', 'Task deadline reached', 'Scheduled event: daily 08:00'];
@@ -67,24 +170,64 @@
   A.actions['wf-approval'] = function (el) { D().approval = el.checked; };
   A.actions['wf-test'] = function () {
     var d = D();
-    UI.modal({ title: 'Test run', foot: '<button class="btn primary" data-close>Done</button>', body: '<p class="muted" style="margin-bottom:12px">Ran against sample data. Nothing was changed and no messages were sent.</p><ul class="timeline">' +
-      '<li class="good"><div>Trigger matched: ' + esc(d.trigger || 'none chosen') + '</div><div class="when">0.1 s</div></li>' +
-      '<li class="good"><div>' + d.conds.filter(function (c) { return c[0]; }).length + ' conditions checked, all true</div><div class="when">0.2 s</div></li>' +
-      d.actions.filter(Boolean).map(function (a) { return '<li class="' + (d.approval ? '' : 'good') + '"><div>' + esc(a) + (d.approval ? ' (would wait for approval)' : ' (simulated)') + '</div><div class="when">0.4 s</div></li>'; }).join('') + '</ul>' });
+    if (!d) return;
+    var payload = workflowPayload(d);
+    var id = d.id !== 'new' ? d.id : (NX.workflows[0] && NX.workflows[0].id);
+    if (!id) { UI.toast('Create a workflow before running a test'); return; }
+    return NXActions.run(function () {
+      return NXApi.request('POST', '/workflows/' + id + '/dry-run', {
+        conditions: payload.conditions, actions: payload.actions, payload: samplePayload(d.conds)
+      });
+    }, 'Test run complete', 'Could not run test').then(function (result) {
+      if (!result) return;
+      var checks = result.results || [];
+      var failures = checks.filter(function (c) { return !c.passed; }).length;
+      UI.modal({ title: 'Test run', foot: '<button class="btn primary" data-close>Done</button>', body: '<p class="muted" style="margin-bottom:12px">Evaluated by the workflow engine against sample data. Nothing was changed and no messages were sent.</p><ul class="timeline">' +
+        '<li class="' + (result.matched ? 'good' : 'bad') + '"><div>Trigger: ' + esc(d.trigger || 'none chosen') + '</div><div class="when">' + (result.matched ? 'matched' : 'no match') + '</div></li>' +
+        '<li class="' + (failures ? 'bad' : 'good') + '"><div>' + checks.length + ' conditions checked, ' + (failures ? failures + ' not matched' : 'all true') + '</div><div class="when">0.2 s</div></li>' +
+        (result.actions || []).map(function (a) { return '<li class="' + (d.approval ? '' : 'good') + '"><div>' + esc(a.title || a.type) + (d.approval ? ' (would wait for approval)' : ' (would run)') + '</div><div class="when">0.4 s</div></li>'; }).join('') + '</ul>' });
+    });
   };
   A.actions['wf-save'] = function () {
     var d = D(), root = document.getElementById('wf');
+    if (!d || !root) return;
     root.querySelector('#wf-name').closest('.field').classList.toggle('has-err', !d.name.trim());
     root.querySelector('[data-change="wf-trigger"]').closest('.field').classList.toggle('has-err', !d.trigger);
     var a0 = root.querySelector('[data-change="wf-action"]'); a0.closest('.field').classList.toggle('has-err', !d.actions.filter(Boolean).length);
     if (!d.name.trim() || !d.trigger || !d.actions.filter(Boolean).length) { var b = root.querySelector('.has-err .input'); if (b) b.focus(); return; }
     d.conds = d.conds.filter(function (c) { return c[0]; }); d.actions = d.actions.filter(Boolean);
-    if (d.id === 'new') { d.id = 'w' + Date.now(); d.on = true; NX.workflows.unshift(d); }
-    else { var w = NX.byId(NX.workflows, d.id); Object.keys(d).forEach(function (k) { w[k] = d[k]; }); }
-    A.state.wfDraft = null; location.hash = '#/automation'; UI.toast('Workflow saved');
+    var isNew = d.id === 'new';
+    var payload = workflowPayload(d);
+    delete payload.id;
+    return NXActions.run(function () {
+      var method = isNew ? 'POST' : 'PATCH';
+      var path = isNew ? '/workflows' : '/workflows/' + d.id;
+      return NXApi.mutate(method, path, payload).then(function (saved) {
+        var workflowId = (saved && saved.id) || d.id;
+        var trigger = { workflowId: workflowId, trigger: TRIGGER_KEYS[d.trigger] || d.trigger, label: d.trigger };
+        var existing = (NX.workflowTriggers || []).filter(function (t) { return t.workflowId === workflowId; })[0];
+        return NXApi.mutate(existing ? 'PATCH' : 'POST', existing ? '/workflow-triggers/' + existing.id : '/workflow-triggers', trigger);
+      });
+    }, 'Workflow saved', 'Could not save workflow').then(function (saved) {
+      if (!saved) return;
+      A.state.wfDraft = null;
+      location.hash = '#/automation';
+    });
   };
-  A.actions['wf-toggle'] = function (el) { var w = NX.byId(NX.workflows, el.getAttribute('data-id')); w.on = el.checked; A.render(); UI.toast(w.name + (w.on ? ' activated' : ' deactivated')); };
-  A.actions['wf-retry'] = function (el) { var x = NX.byId(NX.executions, el.getAttribute('data-id')); x.result = 'Succeeded'; x.detail = 'Retried manually. Reminder for INV-2595 sent.'; x.dur = '2.4 s'; A.render(); UI.toast('Retry succeeded'); };
+  A.actions['wf-toggle'] = function (el) {
+    var w = NX.byId(NX.workflows, el.getAttribute('data-id'));
+    if (!w) return;
+    return NXActions.run(function () {
+      return NXApi.mutate('POST', '/workflows/' + w.id + '/toggle', { active: el.checked });
+    }, w.name + (el.checked ? ' activated' : ' deactivated'), 'Could not update workflow');
+  };
+  A.actions['wf-retry'] = function (el) {
+    var x = NX.byId(NX.executions, el.getAttribute('data-id'));
+    if (!x || !x.wf) return;
+    return NXActions.run(function () {
+      return NXApi.mutate('POST', '/workflows/' + x.wf + '/retry/' + x.id, {});
+    }, 'Retry queued', 'Could not retry this run');
+  };
 
   /* ================= AI agents ================= */
   A.views.agents = function (r) {
@@ -95,7 +238,7 @@
     if (!tab) {
       body = '<div class="grid g-3">' + NX.agents.map(function (a) {
         return '<section class="card agent-card"><div class="a-top">' + UI.agentAvatar(a.short, 'l') + '<div style="flex:1;min-width:0"><div class="row between"><a href="#/agents/a/' + a.id + '" style="color:var(--text)"><h2>' + esc(a.name) + '</h2></a><label class="switch"><input type="checkbox" ' + (a.on ? 'checked' : '') + ' data-change="agent-toggle" data-id="' + a.id + '" aria-label="' + (a.on ? 'Turn off ' : 'Turn on ') + esc(a.name) + '"' + (A.isAdmin() ? '' : ' disabled') + '><span></span></label></div>' +
-          '<p class="a-desc">' + esc(a.desc) + '</p><div class="mt-8"><span class="badge ' + (a.level === 'execute' ? 'accent' : a.level === 'approve' ? 'warn' : '') + '">' + levelNames[a.level] + '</span></div></div></div>' +
+          '<p class="a-desc">' + esc(a.desc) + '</p><div class="mt-8"><span class="badge ' + (displayLevel(a.level) === 'execute' ? 'accent' : displayLevel(a.level) === 'approve' ? 'warn' : '') + '">' + levelNames[displayLevel(a.level)] + '</span></div></div></div>' +
           '<div class="a-stats"><div><b>' + a.runs + '</b><span>Actions</span></div><div><b>' + (a.runs ? a.success + '%' : 'None') + '</b><span>Succeeded</span></div><div><b>' + a.escal + '</b><span>Escalated</span></div></div>' +
           '<div class="card-foot"><span class="row" style="gap:8px;flex:1">Usage <span class="meter" style="flex:1;max-width:120px"><i style="width:' + a.usage + '%"></i></span>' + a.usage + '% of limit</span><a href="#/agents/a/' + a.id + '">Configure</a></div></section>';
       }).join('') + '</div>' +
@@ -137,9 +280,13 @@
       '<div class="actions"><span class="small muted">' + (a.on ? 'On' : 'Off') + '</span><label class="switch"><input type="checkbox" ' + (a.on ? 'checked' : '') + ' data-change="agent-toggle" data-id="' + a.id + '" aria-label="Agent on or off"' + (ed ? '' : ' disabled') + '><span></span></label></div></div>' +
       '<div class="grid g-main"><div class="stack">' +
         '<section class="card"><div class="card-head"><div><h2>How much it can do on its own</h2><div class="sub">You can lower this at any time. High-risk actions always need a person.</div></div></div><div class="card-body"><div class="levels" role="group" aria-label="Automation level">' +
-          ['suggest', 'approve', 'execute'].map(function (l) { return '<button class="level" data-act="agent-level" data-id="' + a.id + '" data-v="' + l + '" aria-pressed="' + (a.level === l) + '"' + (ed ? '' : ' disabled') + '><b>' + levelNames[l] + '</b><span>' + levelDesc[l] + '</span></button>'; }).join('') + '</div></div></section>' +
+          ['suggest', 'approve', 'execute'].map(function (l) { return '<button class="level" data-act="agent-level" data-id="' + a.id + '" data-v="' + l + '" aria-pressed="' + (displayLevel(a.level) === l) + '"' + (ed ? '' : ' disabled') + '><b>' + levelNames[l] + '</b><span>' + levelDesc[l] + '</span></button>'; }).join('') + '</div></div></section>' +
         '<section class="card"><div class="card-head"><div><h2>Permitted tools</h2><div class="sub">The only ways this agent can read or change business data</div></div></div><div class="card-body" style="padding-top:4px;padding-bottom:4px">' +
-          a.tools.map(function (t, i) { return '<div class="perm"><div class="grow"><div>' + esc(t[1]) + '</div><code>' + esc(t[0]) + '</code></div><label class="switch"><input type="checkbox" ' + (t[2] ? 'checked' : '') + ' data-change="agent-tool" data-id="' + a.id + '" data-i="' + i + '" aria-label="' + esc(t[1]) + '"' + (ed ? '' : ' disabled') + '><span></span></label></div>'; }).join('') +
+          a.tools.map(function (t, i) {
+            var tool = TOOL_KEYS[t[0]] || '';
+            var control = tool ? '<label class="switch"><input type="checkbox" ' + (t[2] ? 'checked' : '') + ' data-change="agent-tool" data-id="' + a.id + '" data-i="' + i + '" data-tool="' + tool + '" aria-label="' + esc(t[1]) + '"' + (ed ? '' : ' disabled') + '><span></span></label>' : '<span class="badge" title="No writable permission exists for this legacy tool">Not writable</span>';
+            return '<div class="perm"><div class="grow"><div>' + esc(t[1]) + '</div><code>' + esc(t[0]) + '</code></div>' + control + '</div>';
+          }).join('') +
           a.locked.map(function (t) { return '<div class="perm"><div class="grow"><div>' + esc(t) + '</div><span class="small faint">Always needs human approval or provider verification</span></div><span class="badge">' + icon('lock', 'i-s') + 'Locked</span></div>'; }).join('') +
         '</div></section>' +
         '<section class="card"><div class="card-head"><div><h2>Communication policy</h2><div class="sub">Applied to every reply this agent writes</div></div></div><div class="card-body">' +
@@ -156,29 +303,47 @@
           '<li class="ai"><div>Answered a stock question using live inventory</div><div class="when">Today, 13:47</div></li><li class="ai"><div>Escalated a refund request to Akua Asantewaa</div><div class="when">Today, 09:56</div></li><li class="good"><div>Categorised 14 conversations</div><div class="when">Today</div></li></ul></div></section>' +
       '</div></div></div>';
   }
-  A.actions['agent-toggle'] = function (el) { var a = NX.byId(NX.agents, el.getAttribute('data-id')); a.on = el.checked; A.render(); UI.toast(a.name + (a.on ? ' turned on' : ' turned off. Its conversations move to people.')); };
-  A.actions['agent-level'] = function (el) { var a = NX.byId(NX.agents, el.getAttribute('data-id')); a.level = el.getAttribute('data-v'); A.render(); UI.toast(a.name + ' set to ' + levelNames[a.level].toLowerCase()); };
-  A.actions['agent-tool'] = function (el) { var a = NX.byId(NX.agents, el.getAttribute('data-id')); a.tools[+el.getAttribute('data-i')][2] = el.checked; UI.toast('Tool permission updated and recorded in the audit log'); };
+  A.actions['agent-toggle'] = function (el) {
+    var a = NX.byId(NX.agents, el.getAttribute('data-id'));
+    if (!a) return;
+    return NXActions.run(function () {
+      return NXApi.mutate('PATCH', '/agents/' + a.id, { enabled: el.checked, on: el.checked });
+    }, a.name + (el.checked ? ' turned on' : ' turned off. Its conversations move to people.'), 'Could not update agent');
+  };
+  A.actions['agent-level'] = function (el) {
+    var a = NX.byId(NX.agents, el.getAttribute('data-id'));
+    if (!a) return;
+    var level = el.getAttribute('data-v');
+    return NXActions.run(function () {
+      return NXApi.mutate('POST', '/agents/' + a.id + '/configure', { automationLevel: level === 'approve' ? 'prepare' : level });
+    }, a.name + ' set to ' + levelNames[level].toLowerCase(), 'Could not update automation level');
+  };
+  A.actions['agent-tool'] = function (el) {
+    var tool = el.getAttribute('data-tool');
+    if (!tool) return;
+    return NXActions.run(function () {
+      return NXApi.mutate('PUT', '/agents/' + el.getAttribute('data-id') + '/tools/' + tool, { enabled: el.checked });
+    }, 'Tool permission updated and recorded in the audit log', 'Could not update tool permission');
+  };
   function decide(ap, ok, note) {
-    var me = NX.employee(A.me.emp);
-    ap.status = ok ? 'Approved' : 'Rejected'; ap.reviewer = me.name; ap.decided = 'Today, ' + new Date().toTimeString().slice(0, 5); ap.result = ok ? 'Executed' : 'Not executed'; ap.note = note;
-    NX.audit.unshift({ when: '24 Nov 2026, ' + new Date().toTimeString().slice(0, 8), actor: me.name, type: 'Employee', action: (ok ? 'Approved ' : 'Rejected ') + ap.kind.toLowerCase(), res: ap.record, result: 'Success', approval: ap.id });
-    if (ap.id === 'APR-300') NX.purchaseRequests[0].status = ok ? 'Approved' : 'Rejected';
-    if (ap.id === 'APR-299' && ok) { var o = NX.byId(NX.orders, 'ORD-10478'); o.status = 'Confirmed'; o.aiDraft = false; }
-    A.renderNav(); A.render();
+    return NXActions.run(function () {
+      return NXApi.mutate('POST', '/approvals/' + ap.id + '/decide', { decision: ok ? 'approve' : 'reject', note: note || '' });
+    }, ok ? 'Approval recorded' : 'Request rejected', 'Could not record decision');
   }
   A.actions.approve = function (el) {
     var ap = NX.byId(NX.approvals, el.getAttribute('data-id'));
+    if (!ap) return;
     if (ap.risk === 'High') {
-      UI.modal({ title: 'Approve ' + ap.kind.toLowerCase() + '?', body: '<p>' + esc(ap.op) + '.</p><p class="muted mt-12">This will be carried out straight away and recorded against your name.</p>', foot: '<button class="btn" data-close>Cancel</button><button class="btn primary" data-ok>Approve and execute</button>',
-        onOk: function () { decide(ap, true); UI.toast('Approved. ' + ap.kind + ' executed.'); } });
-    } else { decide(ap, true); UI.toast('Approved. ' + ap.kind + ' executed.'); }
+      UI.modal({ title: 'Approve ' + ap.kind.toLowerCase() + '?', body: '<p>' + esc(ap.op) + '.</p><p class="muted mt-12">This will be queued for execution and recorded against your name.</p>', foot: '<button class="btn" data-close>Cancel</button><button class="btn primary" data-ok>Approve and execute</button>',
+        onOk: function () { return decide(ap, true); } });
+    } else { return decide(ap, true); }
   };
   A.actions.reject = function (el) {
     var ap = NX.byId(NX.approvals, el.getAttribute('data-id'));
-    UI.modal({ title: 'Reject request', ok: 'Reject', body: '<p class="muted" style="margin-bottom:12px">' + esc(ap.op) + '</p>' + UI.field({ label: 'Reason', type: 'textarea', required: true, err: 'Tell the requester why, so they know what to do next.' }),
+    if (!ap) return;
+    UI.modal({ title: 'Reject request', ok: 'Reject', body: '<p class="muted" style="margin-bottom:12px">' + esc(ap.op) + '</p>' + UI.field({ label: 'Reason', type: 'textarea', required: true, name: 'note', err: 'Tell the requester why, so they know what to do next.' }),
       foot: '<button class="btn" data-close>Cancel</button><button class="btn danger solid" data-ok>Reject</button>',
-      onOk: function (m) { if (!UI.validate(m)) return false; decide(ap, false, m.querySelector('textarea').value.trim()); UI.toast('Request rejected'); } });
+      onOk: function (m) { if (!UI.validate(m)) return false; return decide(ap, false, A.readForm(m).note); } });
   };
 
   /* ================= Analytics ================= */
@@ -235,14 +400,22 @@
   };
   A.actions['int-on'] = function (el) {
     var i = NX.byId(NX.integrations, el.getAttribute('data-id'));
+    if (!i) return;
     UI.modal({ title: (i.status === 'error' ? 'Reconnect ' : 'Connect ') + i.name, ok: 'Continue to ' + i.name.split(' ')[0],
       body: '<p class="muted">You will sign in to ' + esc(i.name.split(' (')[0]) + ' in a new window and choose what Nexora may access. Nexora will be able to:</p><ul class="mt-12" style="padding-left:18px;line-height:1.9">' + (i.cat === 'Communication' ? '<li>Receive messages sent to your business account</li><li>Send replies written by your team or approved agents</li><li>Read delivery and read status</li>' : i.cat === 'Payments' ? '<li>Receive payment confirmations to verify invoices</li><li>Create payment links on invoices</li>' : '<li>Read and write the records you choose to sync</li>') + '</ul>',
-      onOk: function () { i.status = 'connected'; i.sync = 'Just now'; if (i.id === 'instagram') i.detail = '@example'; A.render(); UI.toast(i.name + ' connected'); } });
+      onOk: function () {
+        var body = {};
+        if (i.id === 'instagram') body.detail = '@example';
+        return NXActions.run(function () { return NXApi.mutate('POST', '/integrations/' + i.id + '/connect', body); }, i.name + ' connected', 'Could not connect ' + i.name);
+      } });
   };
   A.actions['int-off'] = function (el) {
     var i = NX.byId(NX.integrations, el.getAttribute('data-id'));
+    if (!i) return;
     UI.modal({ title: 'Disconnect ' + i.name + '?', body: '<p>' + (i.cat === 'Communication' ? 'New messages from this channel will stop arriving in the inbox. Past conversations stay.' : 'Syncing will stop. Records already in Nexora stay.') + '</p>',
-      foot: '<button class="btn" data-close>Keep connected</button><button class="btn danger solid" data-ok>Disconnect</button>', onOk: function () { i.status = 'off'; i.sync = ''; A.render(); UI.toast(i.name + ' disconnected'); } });
+      foot: '<button class="btn" data-close>Keep connected</button><button class="btn danger solid" data-ok>Disconnect</button>', onOk: function () {
+        return NXActions.run(function () { return NXApi.mutate('POST', '/integrations/' + i.id + '/disconnect', {}); }, i.name + ' disconnected', 'Could not disconnect ' + i.name);
+      } });
   };
 
   /* ================= Settings ================= */
@@ -253,6 +426,8 @@
     if (admin) tabs.push(['audit', 'Audit log'], ['data', 'Data and privacy']);
     tabs.push(['appearance', 'Appearance']);
     var b = NX.business, body;
+    if (tab === 'notifications') loadPreferences();
+    if (tab === 'data') loadRetention();
     if (!tab) {
       body = '<section class="card" style="max-width:820px"><div class="card-body"><div class="form-grid" id="biz">' +
         UI.field({ label: 'Business name', required: true, value: b.name, name: 'name' }) + UI.field({ label: 'Workspace ID', value: b.id, readonly: true, hint: 'Share this with Nexora support if you need help.' }) +
@@ -263,14 +438,18 @@
         UI.field({ label: 'Industry', value: b.industry, name: 'industry' }) + UI.field({ label: 'Tax identification number', value: 'TIN-REDACTED', name: 'tin' }) +
         '</div></div><div class="card-foot"><span>Shown on invoices and customer messages</span><button class="btn primary sm" data-act="save-biz"' + (admin ? '' : ' disabled') + '>Save changes</button></div></section>';
     } else if (tab === 'notifications') {
-      var rows = [['New customer messages assigned to me', 1, 1, 1], ['Approval requests', 1, 1, 1], ['Task assigned or overdue', 1, 1, 0], ['Low-stock alerts', 1, 0, 0], ['Order updates', 1, 0, 0], ['Payment status changes', 1, 1, 0], ['Workflow failures', 1, 0, 1], ['AI escalations', 1, 1, 0], ['Integration problems', 1, 0, 1]];
+      var prefs = NX.notificationPreferences || {};
       body = '<section class="card" style="max-width:820px"><table class="t matrix"><thead><tr><th>Notify me about</th><th>In app</th><th>Desktop</th><th>Email</th></tr></thead><tbody>' +
-        rows.map(function (x) { return '<tr><td>' + x[0] + '</td>' + [1, 2, 3].map(function (k) { return '<td><input type="checkbox" ' + (x[k] ? 'checked' : '') + ' aria-label="' + x[0] + ', ' + ['', 'in app', 'desktop', 'email'][k] + '" data-change="pref"></td>'; }).join('') + '</tr>'; }).join('') +
+        PREF_ROWS.map(function (x) {
+          return '<tr><td>' + esc(x[0]) + '</td>' + [['in app', x[1]], ['desktop', 'desktop'], ['email', 'email']].map(function (ch, i) {
+            return '<td><input type="checkbox" ' + (prefs[ch[1]] ? 'checked' : '') + ' aria-label="' + esc(x[0] + ', ' + ch[0]) + '" data-change="pref" data-key="' + x[1] + '" data-ch="' + (i + 1) + '"></td>';
+          }).join('') + '</tr>';
+        }).join('') +
         '</tbody></table><div class="card-foot"><span>Desktop notifications use your Windows or macOS notification settings.</span></div></section>';
     } else if (tab === 'security') {
       body = '<div class="stack" style="max-width:820px"><section class="card"><div class="card-head"><h2>Password and verification</h2></div><ul class="list"><li><div class="grow"><div class="title">Password</div><div class="meta">Changed 3 months ago</div></div><button class="btn sm" data-act="change-pw">Change password</button></li><li><div class="grow"><div class="title">Two-step verification</div><div class="meta">Code from an authenticator app when signing in on a new device</div></div><span class="badge good">On</span></li></ul></section>' +
         '<section class="card"><div class="card-head"><div><h2>Signed-in devices</h2><div class="sub">Web, Windows and macOS sessions for your account</div></div><button class="btn sm" data-act="signout-others">Sign out other devices</button></div><ul class="list">' +
-        NX.sessions.map(function (s) { return '<li>' + icon(s.icon) + '<div class="grow"><div class="title">' + esc(s.device) + (s.current ? ' <span class="badge accent">This device</span>' : '') + '</div><div class="meta">' + esc(s.where) + ', ' + esc(s.when) + '</div></div>' + (s.current ? '' : '<button class="btn ghost sm" data-act="signout-one">Sign out</button>') + '</li>'; }).join('') + '</ul></section></div>';
+        NX.sessions.map(function (s) { return '<li>' + icon(s.icon) + '<div class="grow"><div class="title">' + esc(s.device) + (s.current ? ' <span class="badge accent">This device</span>' : '') + '</div><div class="meta">' + esc(s.where) + ', ' + esc(s.when) + '</div></div>' + (s.current ? '' : '<button class="btn ghost sm" data-act="signout-one" data-id="' + esc(s.id) + '">Sign out</button>') + '</li>'; }).join('') + '</ul></section></div>';
     } else if (tab === 'apps') {
       body = '<div class="grid g-3" style="max-width:1000px">' + [['globe', 'Web app', 'Any modern browser', 'Works in current Chrome, Edge, Safari and Firefox.', 'You are here'], ['monitor', 'Windows', 'Version 1.4.2', 'Windows 10 and 11, 64-bit. Updates install automatically.', 'Download for Windows'], ['monitor', 'macOS', 'Version 1.4.2', 'macOS 12 or later, Apple silicon and Intel.', 'Download for macOS']].map(function (x, i) {
         return '<section class="card"><div class="card-body"><div style="color:var(--text-2)">' + icon(x[0], 'i-l') + '</div><h2 class="mt-12">' + x[1] + '</h2><div class="small faint">' + x[2] + '</div><p class="small muted mt-8">' + x[3] + '</p><button class="btn ' + (i ? 'primary' : '') + ' sm mt-16"' + (i ? ' data-act="download-app"' : ' disabled') + '>' + (i ? icon('download', 'i-s') : '') + x[4] + '</button></div></section>';
@@ -283,8 +462,16 @@
         rows2.map(function (e) { return '<tr><td class="small muted nowrap num">' + esc(e.when) + '</td><td class="strong">' + esc(e.actor) + '</td><td>' + (e.type === 'AI agent' ? '<span class="badge ai">AI agent</span>' : '<span class="badge outline">' + e.type + '</span>') + '</td><td>' + esc(e.action) + '</td><td class="small">' + esc(e.res) + '</td><td>' + UI.status(e.result) + '</td><td class="small">' + (e.approval ? '<a href="#/agents/approvals">' + e.approval + '</a>' : '<span class="faint">None</span>') + '</td></tr>'; }).join('') +
         '</tbody></table></div><div class="pager"><span>' + rows2.length + ' events. Workspace ' + NX.business.id + '</span><button class="btn sm" data-act="export">' + icon('download', 'i-s') + 'Export</button></div></div>';
     } else if (tab === 'data') {
+      var policy = b.retentionPolicy || {};
+      var dayOption = function (label) { return [String(RETENTION_DAYS[label]), label]; };
       body = '<div class="stack" style="max-width:820px"><section class="card"><div class="card-head"><div><h2>Export workspace data</h2><div class="sub">Customers, orders, invoices, products and conversations as CSV files</div></div><button class="btn sm" data-act="export">' + icon('download', 'i-s') + 'Request export</button></div></section>' +
-        '<section class="card"><div class="card-head"><h2>Retention</h2></div><div class="card-body form-grid">' + UI.field({ label: 'Keep conversations for', type: 'select', options: ['1 year', '3 years', '7 years', 'Until deleted'], value: '3 years', required: true }) + UI.field({ label: 'Keep audit log for', type: 'select', options: ['3 years', '7 years'], value: '7 years', required: true }) + '</div><div class="card-foot"><span>Financial records are kept as long as Ghana tax rules require.</span><button class="btn sm primary" data-act="saved">Save</button></div></section>' +
+        '<section class="card"><div class="card-head"><h2>Retention</h2></div><div class="card-body form-grid" id="retention">' +
+        UI.field({ label: 'Keep conversations for', type: 'select', name: 'messageDays', options: [dayOption('1 year'), dayOption('3 years'), dayOption('7 years'), dayOption('Until deleted')], value: String(policy.messageDays === undefined ? 1095 : policy.messageDays), required: true }) +
+        UI.field({ label: 'Keep audit log for', type: 'select', name: 'auditLogDays', options: [dayOption('3 years'), dayOption('7 years')], value: String(policy.auditLogDays === undefined ? 2555 : policy.auditLogDays), required: true }) +
+        '<input type="hidden" name="sessionDays" value="' + esc(String(policy.sessionDays === undefined ? 30 : policy.sessionDays)) + '">' +
+        '<input type="hidden" name="backupDays" value="' + esc(String(policy.backupDays === undefined ? 90 : policy.backupDays)) + '">' +
+        '<input type="hidden" name="enabled" value="' + (policy.enabled === false ? 'false' : 'true') + '">' +
+        '</div><div class="card-foot"><span>Financial records are kept as long as Ghana tax rules require.</span><button class="btn sm primary" data-act="saved">Save</button></div></section>' +
         '<section class="card"><div class="card-head"><div><h2>Delete a customer\'s personal data</h2><div class="sub">Removes contact details and messages. Orders and invoices keep an anonymised reference.</div></div><button class="btn danger sm" data-act="erase">Start a deletion request</button></div></section></div>';
     } else {
       var cur = document.documentElement.getAttribute('data-theme');
@@ -292,20 +479,68 @@
     }
     return '<div class="page">' + A.head('Settings', '', '') + A.tabBar('settings', tabs, tab) + body + '</div>';
   };
-  A.actions['save-biz'] = function () { var f = document.getElementById('biz'); if (!UI.validate(f)) return; var v = A.readForm(f); Object.keys(v).forEach(function (k) { if (k in NX.business) NX.business[k] = v[k]; }); A.renderShell(); A.render(); UI.toast('Business profile saved'); };
+  A.actions['save-biz'] = function () {
+    var f = document.getElementById('biz');
+    if (!f || !UI.validate(f)) return;
+    var v = A.readForm(f), patch = {};
+    ['name', 'email', 'phone', 'address', 'currency', 'timezone', 'industry', 'tin'].forEach(function (k) { if (v[k] !== undefined) patch[k] = v[k]; });
+    return NXActions.run(function () { return NXApi.mutate('PATCH', '/businesses/current', patch); }, 'Business profile saved', 'Could not save business profile');
+  };
   A.actions['audit-type'] = function (el) { A.state.auditType = el.getAttribute('data-v'); A.render(); };
   A.actions['set-theme'] = function (el) { A.setTheme(el.getAttribute('data-v')); A.render(); };
-  A.actions.pref = function () { UI.toast('Preference saved'); };
-  A.actions.saved = function () { UI.toast('Settings saved'); };
+  A.actions.pref = function (el) {
+    var channel = el.getAttribute('data-ch');
+    var key = channel === '2' ? 'desktop' : channel === '3' ? 'email' : (el.getAttribute('data-key') || 'inApp');
+    return NXActions.run(function () {
+      return NXApi.request('GET', '/notifications/preferences').then(function (current) {
+        var prefs = Object.assign({}, current || {});
+        prefs[key] = el.checked;
+        return NXApi.mutate('PUT', '/notifications/preferences', { preferences: prefs });
+      });
+    }, 'Preference saved', 'Could not save preference');
+  };
+  A.actions.saved = function () {
+    var f = document.getElementById('retention');
+    if (!f || !UI.validate(f)) return;
+    var v = A.readForm(f);
+    var payload = {
+      messageDays: Number(v.messageDays), auditLogDays: Number(v.auditLogDays),
+      sessionDays: Number(v.sessionDays), backupDays: Number(v.backupDays),
+      enabled: v.enabled !== 'false'
+    };
+    return NXActions.run(function () { return NXApi.mutate('PUT', '/data/retention', payload); }, 'Retention settings saved', 'Could not save retention settings');
+  };
   A.actions['download-app'] = function () { UI.toast('Download starts from your Nexora account page.'); };
-  A.actions['signout-others'] = function () { NX.sessions = NX.sessions.filter(function (s) { return s.current; }); A.render(); UI.toast('Signed out of all other devices'); };
-  A.actions['signout-one'] = function (el) { var li = el.closest('li'); var i = Array.prototype.indexOf.call(li.parentNode.children, li); NX.sessions.splice(i, 1); A.render(); UI.toast('Device signed out'); };
+  A.actions['signout-others'] = function () {
+    return NXActions.run(function () { return NXApi.mutate('POST', '/auth/sessions/revoke-others', {}); }, 'Signed out of all other devices', 'Could not sign out other devices');
+  };
+  A.actions['signout-one'] = function (el) {
+    var id = el.getAttribute('data-id');
+    if (!id) return;
+    return NXActions.run(function () { return NXApi.mutate('DELETE', '/auth/sessions/' + id); }, 'Device signed out', 'Could not sign out this device');
+  };
   A.actions['change-pw'] = function () {
-    UI.modal({ title: 'Change password', ok: 'Change password', body: '<div class="stack" style="gap:12px">' + UI.field({ label: 'Current password', type: 'password', required: true }) + UI.field({ label: 'New password', type: 'password', required: true, hint: 'At least 10 characters.', name: 'n', err: 'Use at least 10 characters.' }) + '</div>',
-      onOk: function (m) { var ok = UI.validate(m); var n = m.querySelector('[name=n]'); if (n.value.length < 10) { n.closest('.field').classList.add('has-err'); ok = false; } if (!ok) return false; UI.toast('Password changed. Other devices were signed out.'); } });
+    UI.modal({ title: 'Change password', ok: 'Change password', body: '<div class="stack" style="gap:12px">' + UI.field({ label: 'Current password', type: 'password', required: true, name: 'currentPassword' }) + UI.field({ label: 'New password', type: 'password', required: true, hint: 'At least 10 characters.', name: 'newPassword', err: 'Use at least 10 characters.' }) + '</div>',
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var v = A.readForm(m);
+        if (v.newPassword.length < 10) { m.querySelector('[name=newPassword]').closest('.field').classList.add('has-err'); return false; }
+        return NXActions.run(function () {
+          return NXApi.mutate('POST', '/auth/password/change', { currentPassword: v.currentPassword, newPassword: v.newPassword });
+        }, 'Password changed. Other devices were signed out.', 'Could not change password');
+      } });
   };
   A.actions.erase = function () {
-    UI.modal({ title: 'Delete a customer\'s personal data', body: UI.field({ label: 'Customer', type: 'select', required: true, placeholder: 'Choose a customer', options: NX.customers.map(function (c) { return [c.id, c.name]; }) }) + '<p class="small muted mt-12">The request goes to the business owner for approval. Once approved it cannot be undone.</p>',
-      foot: '<button class="btn" data-close>Cancel</button><button class="btn danger solid" data-ok>Submit request</button>', onOk: function (m) { if (!UI.validate(m)) return false; UI.toast('Deletion request sent for approval'); } });
+    UI.modal({ title: 'Delete a customer\'s personal data', body: UI.field({ label: 'Customer', type: 'select', required: true, placeholder: 'Choose a customer', name: 'customer', options: NX.customers.map(function (c) { return [c.id, c.name]; }) }) +
+      UI.field({ label: 'Confirmation', required: true, name: 'confirmation', placeholder: 'Type DELETE', hint: 'Type DELETE exactly to confirm.', err: 'Type DELETE to confirm this request.' }) +
+      '<p class="small muted mt-12">Contact details are redacted as soon as you confirm. Orders and invoices keep an anonymised reference, and this cannot be undone.</p>',
+      foot: '<button class="btn" data-close>Cancel</button><button class="btn danger solid" data-ok>Submit request</button>', onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var v = A.readForm(m);
+        if (v.confirmation !== 'DELETE') { m.querySelector('[name=confirmation]').closest('.field').classList.add('has-err'); return false; }
+        return NXActions.run(function () {
+          return NXApi.mutate('POST', '/data/delete', { collection: 'customers', id: v.customer, confirmation: v.confirmation });
+        }, 'Deletion request submitted', 'Could not submit deletion request');
+      } });
   };
 })();

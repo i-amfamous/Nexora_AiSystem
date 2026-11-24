@@ -1,6 +1,6 @@
 /* App shell: routing, navigation by role, command palette, notifications. */
 (function () {
-  var A = { views: {}, mounts: {}, actions: {}, state: {} };
+  var A = { views: {}, mounts: {}, actions: {}, state: {}, apiMode: true, permissions: [], identity: null };
 
   A.personas = [
     { emp: 'e1', role: 'owner' },
@@ -39,14 +39,40 @@
     ] }
   ];
 
+  A.pagePermissions = {
+    overview: 'business:read', inbox: 'inbox:read', tasks: 'tasks:read', customers: 'customers:read',
+    sales: 'sales:read', orders: 'orders:read', inventory: 'inventory:read', finance: 'finance:read',
+    employees: 'employees:read', automation: 'workflows:read', agents: 'agents:read',
+    analytics: 'analytics:read', integrations: 'integrations:read', settings: 'business:read'
+  };
   A.can = function (page) {
+    var roleAllowed = false;
     for (var g = 0; g < A.nav.length; g++) for (var i = 0; i < A.nav[g].items.length; i++) {
       var it = A.nav[g].items[i];
-      if (it.id === page) return it.roles.indexOf(A.me.role) !== -1;
+      if (it.id === page) roleAllowed = it.roles.indexOf(A.me.role) !== -1;
     }
-    return true;
+    var permission = A.pagePermissions[page];
+    var permissionAllowed = !A.apiMode || !permission || !A.permissions.length || A.permissions.indexOf(permission) !== -1;
+    return roleAllowed && permissionAllowed;
   };
   A.isAdmin = function () { return A.me.role === 'owner' || A.me.role === 'admin'; };
+  A.applyIdentity = function (me, context, permissions) {
+    A.identity = me;
+    A.permissions = permissions || [];
+    A.me = { emp: me.employeeId || me.id, role: me.role || context.role };
+    A.context = context;
+  };
+  A.signOut = async function () {
+    try { await NXApi.request('POST', '/auth/logout', {}); } catch (e) {}
+    NXApi.clearToken();
+    NXApi.stopRealtime();
+    A.signedIn = false;
+    A.identity = null;
+    A.permissions = [];
+    location.hash = '#/auth/login';
+    A.render();
+    UI.toast('Signed out securely');
+  };
 
   A.route = function () {
     var h = location.hash.replace(/^#\/?/, '');
@@ -85,7 +111,7 @@
     var r = A.route();
     var html = '';
     A.nav.forEach(function (g) {
-      var items = g.items.filter(function (it) { return it.roles.indexOf(A.me.role) !== -1; });
+      var items = g.items.filter(function (it) { return it.roles.indexOf(A.me.role) !== -1 && A.can(it.id); });
       if (!items.length) return;
       html += '<div class="nav-group">' + (g.group ? '<div class="nav-group-label">' + g.group + '</div>' : '');
       items.forEach(function (it) {
@@ -131,12 +157,13 @@
   };
 
   A.actions['user-menu'] = function (el) {
-    var items = [{ header: true, label: 'Preview navigation as' }];
-    A.personas.forEach(function (p) {
-      var e = NX.employee(p.emp);
-      items.push({ label: e.name.split(' ')[0] + ', ' + NX.role(p.role).name, icon: 'user', checked: p === A.me, fn: function () { A.me = p; A.renderShell(); A.render(); UI.toast('Now viewing as ' + e.name + ' (' + NX.role(p.role).name + ')'); } });
-    });
-    items.push('sep', { label: 'Account settings', icon: 'settings', fn: function () { A.go('#/settings/security'); } }, { label: 'Sign out', icon: 'logout', fn: function () { A.signedIn = false; location.hash = '#/auth/login'; A.render(); } });
+    var name = (A.identity && A.identity.name) || (NX.employee(A.me.emp) || {}).name || 'Signed-in user';
+    var items = [
+      { header: true, label: name },
+      { label: 'Account settings', icon: 'settings', fn: function () { A.go('#/settings/security'); } },
+      'sep',
+      { label: 'Sign out', icon: 'logout', fn: A.signOut }
+    ];
     UI.menu(el, items);
   };
 
@@ -147,7 +174,7 @@
       { label: 'Adom Kumasi Branch', icon: 'building', fn: function () { UI.toast('Each workspace keeps its records separate. Switching is done by the server after checking your membership.'); } },
       'sep',
       { label: 'Business profile', icon: 'settings', fn: function () { A.go('#/settings'); } },
-      { label: 'Register a new business', icon: 'plus', fn: function () { A.signedIn = false; location.hash = '#/auth/register'; A.render(); } }
+      { label: 'Register a new business', icon: 'plus', fn: function () { NXApi.clearToken(); NXApi.stopRealtime(); A.signedIn = false; location.hash = '#/auth/register'; A.render(); } }
     ]);
   };
 
@@ -173,15 +200,22 @@
     var layer = document.getElementById('overlay');
     layer.innerHTML = html;
     layer.querySelector('[data-scrim]').addEventListener('click', UI.closeAll);
-    layer.querySelector('[data-markall]').addEventListener('click', function () {
-      NX.notifications.forEach(function (n) { n.unread = false; });
-      UI.closeAll(); A.renderShell(); A.render(); UI.toast('All notifications marked as read');
+    layer.querySelector('[data-markall]').addEventListener('click', async function () {
+      try {
+        await NXApi.mutate('POST', '/notifications/read-all', {});
+        UI.closeAll(); UI.toast('All notifications marked as read');
+      } catch (error) { UI.toast(error.message || 'Could not update notifications'); }
     });
     layer.querySelector('[data-close-pop]').addEventListener('click', UI.closeAll);
     layer.querySelectorAll('.notif').forEach(function (el) {
-      var open = function () {
+      var open = async function () {
         var n = NX.byId(NX.notifications, el.getAttribute('data-id'));
-        n.unread = false; UI.closeAll(); A.renderShell(); location.hash = n.go; A.render();
+        if (!n) return;
+        if (n.unread) {
+          try { await NXApi.mutate('PATCH', '/notifications/' + n.id, { unread: false }); }
+          catch (error) { UI.toast(error.message || 'Could not update notification'); }
+        }
+        UI.closeAll(); location.hash = n.go; A.render();
       };
       el.addEventListener('click', open);
       el.addEventListener('keydown', function (e) { if (e.key === 'Enter') open(); });
@@ -259,12 +293,29 @@
 
   window.App = A;
 
-  document.addEventListener('DOMContentLoaded', function () {
+  document.addEventListener('DOMContentLoaded', async function () {
     var t = 'light';
     try { t = localStorage.getItem('nx-theme') || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
     document.documentElement.setAttribute('data-theme', t);
-    A.signedIn = !/^#\/auth/.test(location.hash) && location.hash !== '';
+    A.signedIn = false;
     if (!location.hash) location.hash = '#/auth/login';
     A.render();
+    if (!NXApi.getToken()) return;
+    try {
+      var session = await NXApi.restoreSession();
+      A.applyIdentity(session.me, session.context, session.permissions);
+      NXApi.applyBootstrap(session.bootstrap);
+      A.signedIn = true;
+      if (/^#\/auth/.test(location.hash)) location.hash = '#/overview';
+      A.renderShell(); A.render();
+      NXApi.connectRealtime();
+    } catch (error) {
+      NXApi.clearToken();
+      NXApi.stopRealtime();
+      A.signedIn = false;
+      location.hash = '#/auth/login';
+      A.render();
+      if (error.status !== 401) UI.toast(error.message || 'Could not restore your session');
+    }
   });
 })();

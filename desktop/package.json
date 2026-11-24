@@ -1,0 +1,42 @@
+{
+  "name": "nexora-desktop",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Electron wrapper for the centrally hosted Nexora web application",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron . --dev",
+    "build:win": "electron-builder --win --publish never",
+    "build:mac": "electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "electron": "39.8.10",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.nexora.desktop",
+    "productName": "Nexora",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
+  }
+}

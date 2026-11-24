@@ -19,14 +19,14 @@
       form = '<form class="auth-form" id="auth-form" novalidate style="width:460px">' +
         '<div><h2>Register your business</h2><p class="muted mt-8">You will be the business owner of this workspace. You can invite your team next.</p></div>' +
         '<div class="form-grid">' +
-          UI.field({ label: 'Business name', required: true, placeholder: 'Example Workspace Ltd', span: true }) +
-          UI.field({ label: 'Your full name', required: true }) +
-          UI.field({ label: 'Work email', type: 'email', required: true, err: 'Enter a valid email address, for example name@company.com.' }) +
-          UI.field({ label: 'Phone', type: 'tel', required: true, placeholder: '+233 24 000 0000' }) +
-          UI.field({ label: 'Password', type: 'password', required: true, hint: 'At least 10 characters.', err: 'Use at least 10 characters.' }) +
-          UI.field({ label: 'Currency', type: 'select', options: [['GHS', 'Ghana cedi (GHS)'], ['USD', 'US dollar (USD)'], ['NGN', 'Nigerian naira (NGN)']], value: 'GHS', required: true }) +
-          UI.field({ label: 'Time zone', type: 'select', options: ['Africa/Accra (GMT+0)', 'Africa/Lagos (GMT+1)', 'Europe/London (GMT+0)'], value: 'Africa/Accra (GMT+0)', required: true }) +
-          UI.field({ label: 'Business address', span: true, placeholder: 'Street, city, region' }) +
+          UI.field({ label: 'Business name', name: 'businessName', required: true, placeholder: 'Example Workspace Ltd', span: true }) +
+          UI.field({ label: 'Your full name', name: 'name', required: true }) +
+          UI.field({ label: 'Work email', name: 'email', type: 'email', required: true, err: 'Enter a valid email address, for example name@company.com.' }) +
+          UI.field({ label: 'Phone', name: 'phone', type: 'tel', required: true, placeholder: '+233 24 000 0000' }) +
+          UI.field({ label: 'Password', name: 'password', type: 'password', required: true, hint: 'At least 10 characters.', err: 'Use at least 10 characters.' }) +
+          UI.field({ label: 'Currency', name: 'currency', type: 'select', options: [['GHS', 'Ghana cedi (GHS)'], ['USD', 'US dollar (USD)'], ['NGN', 'Nigerian naira (NGN)']], value: 'GHS', required: true }) +
+          UI.field({ label: 'Time zone', name: 'timezone', type: 'select', options: ['Africa/Accra (GMT+0)', 'Africa/Lagos (GMT+1)', 'Europe/London (GMT+0)'], value: 'Africa/Accra (GMT+0)', required: true }) +
+          UI.field({ label: 'Business address', name: 'address', span: true, placeholder: 'Street, city, region' }) +
         '</div>' +
         '<label class="check small"><input type="checkbox" required id="terms"><span class="muted">I agree to the Terms of Service and Privacy Policy.</span></label>' +
         '<button class="btn primary" type="submit" style="height:40px">Create workspace</button>' +
@@ -34,21 +34,21 @@
     } else if (mode === 'forgot') {
       form = '<form class="auth-form" id="auth-form" novalidate>' +
         '<div><h2>Reset your password</h2><p class="muted mt-8">Enter the email you sign in with. We will send a link that expires in 30 minutes.</p></div>' +
-        UI.field({ label: 'Email', type: 'email', required: true, err: 'Enter the email address on your account.' }) +
+        UI.field({ label: 'Email', name: 'email', type: 'email', required: true, err: 'Enter the email address on your account.' }) +
         '<button class="btn primary" type="submit" style="height:40px">Send reset link</button>' +
         '<p class="small muted" style="text-align:center"><a href="#/auth/login">Back to sign in</a></p></form>';
     } else {
       form = '<form class="auth-form" id="auth-form" novalidate>' +
         '<div><h2>Sign in to Nexora</h2><p class="muted mt-8">Use the account your business invited you with.</p></div>' +
-        UI.field({ label: 'Email', type: 'email', required: true, value: 'owner@example.test', err: 'Enter a valid email address.' }) +
-        '<div class="field"><div class="row between"><label for="pw">Password</label><a class="small" href="#/auth/forgot">Forgot password?</a></div><input id="pw" class="input" type="password" required value="demo-password"><span class="err">Enter your password.</span></div>' +
+        UI.field({ label: 'Email', name: 'email', type: 'email', required: true, value: 'owner@example.test', err: 'Enter a valid email address.' }) +
+        '<div class="field"><div class="row between"><label for="pw">Password</label><a class="small" href="#/auth/forgot">Forgot password?</a></div><input id="pw" name="password" class="input" type="password" required value="redacted-password"><span class="err">Enter your password.</span></div>' +
         '<label class="check small"><input type="checkbox" checked><span class="muted">Keep me signed in on this device</span></label>' +
         '<button class="btn primary" type="submit" style="height:40px">Sign in</button>' +
         '<p class="small muted" style="text-align:center">New to Nexora? <a href="#/auth/register">Register your business</a></p></form>';
     }
     document.getElementById('root').innerHTML = '<div class="auth">' + side + '<div class="auth-main">' + form + '</div></div>';
     var f = document.getElementById('auth-form');
-    f.addEventListener('submit', function (e) {
+    f.addEventListener('submit', async function (e) {
       e.preventDefault();
       var terms = f.querySelector('#terms');
       var pw = f.querySelector('input[type=password]');
@@ -56,10 +56,54 @@
       if (mode === 'register' && pw && pw.value.length < 10) { pw.closest('.field').classList.add('has-err'); ok = false; }
       if (terms && !terms.checked) { ok = false; terms.parentNode.style.color = 'var(--bad)'; }
       if (!ok) return;
-      if (mode === 'forgot') { UI.toast('If that email has an account, a reset link is on its way.'); location.hash = '#/auth/login'; return; }
-      A.signedIn = true;
-      location.hash = '#/overview';
-      if (mode === 'register') setTimeout(function () { UI.toast('Workspace created. Invite your team from Employees.'); }, 50);
+
+      var value = function (name) {
+        var el = f.querySelector('[name="' + name + '"]');
+        return el ? String(el.value || '').trim() : '';
+      };
+      var submit = f.querySelector('button[type=submit]');
+      if (submit) submit.disabled = true;
+
+      try {
+        if (mode === 'forgot') {
+          await NXApi.request('POST', '/auth/password-reset/request', { email: value('email') });
+          UI.toast('If that email has an account, a reset link is on its way.');
+          location.hash = '#/auth/login';
+          return;
+        }
+
+        if (mode === 'register') {
+          await NXApi.register({
+            businessName: value('businessName'),
+            name: value('name'),
+            email: value('email'),
+            phone: value('phone'),
+            password: value('password'),
+            currency: value('currency') || 'GHS',
+            timezone: value('timezone').split(' ')[0] || 'Africa/Accra',
+            address: value('address')
+          });
+        } else {
+          await NXApi.login(value('email'), value('password'));
+        }
+
+        var session = await NXApi.restoreSession();
+        A.applyIdentity(session.me, session.context, session.permissions);
+        NXApi.applyBootstrap(session.bootstrap);
+        A.signedIn = true;
+        location.hash = '#/overview';
+        A.renderShell();
+        A.render();
+        NXApi.connectRealtime();
+        UI.toast(mode === 'register' ? 'Workspace created. Invite your team from Employees.' : 'Signed in securely');
+      } catch (error) {
+        NXApi.clearToken();
+        NXApi.stopRealtime();
+        A.signedIn = false;
+        UI.toast(error && error.message ? error.message : 'Could not complete sign in');
+      } finally {
+        if (submit) submit.disabled = false;
+      }
     });
   };
 
@@ -180,7 +224,6 @@
   A.views.inbox = function (r) {
     var list = NX.conversations.filter(convFilter);
     var cur = NX.byId(NX.conversations, r.sub) || null;
-    if (cur) cur.unread = false;
     var counts = {};
     tabs.forEach(function (t) { var s = A.state.inboxTab; A.state.inboxTab = t[0]; counts[t[0]] = NX.conversations.filter(convFilter).length; A.state.inboxTab = s; });
 
@@ -193,7 +236,7 @@
         var cust = NX.customer(c.customer);
         var last = c.messages.filter(function (m) { return m.dir === 'in' || m.dir === 'out'; }).slice(-1)[0];
         var asg = c.assignee ? NX.employee(c.assignee) : null;
-        return '<a class="conv ' + (c.unread ? 'unread' : '') + '" href="#/inbox/' + c.id + '" aria-selected="' + (cur && cur.id === c.id) + '" style="color:inherit;text-decoration:none">' +
+        return '<a class="conv ' + (c.unread ? 'unread' : '') + '" href="#/inbox/' + c.id + '" data-act="open-conversation" data-id="' + c.id + '" aria-selected="' + (cur && cur.id === c.id) + '" style="color:inherit;text-decoration:none">' +
           UI.avatar(cust.name) + '<div class="c-body"><div class="c-top">' + (c.unread ? '<span class="unread-dot" aria-label="Unread"></span>' : '') + '<span class="c-name">' + esc(cust.name) + '</span><span class="c-time">' + c.time + '</span></div>' +
           '<div class="c-snip">' + (last.dir === 'out' ? (last.ai ? 'AI: ' : 'You: ') : '') + esc(last.text.split('\n')[0]) + '</div>' +
           '<div class="c-meta">' + UI.chan(c.channel) + UI.prio(c.prio) +
@@ -208,7 +251,6 @@
       thread = '<section class="thread" style="align-items:center;justify-content:center">' + UI.empty('Select a conversation', 'Messages from WhatsApp, email, Telegram, website chat, Instagram and Messenger arrive here.') + '</section>';
       ctx = '<aside class="ctx"></aside>';
     } else {
-      cur.unread = false;
       var cust = NX.customer(cur.customer);
       var ch = NX.channels[cur.channel];
       var aiMode = cur.handler === 'ai';
@@ -242,6 +284,7 @@
           ? '<div class="callout ai">' + icon('sparkle') + '<div style="flex:1">' + esc(cur.agent) + ' is handling replies. Take over to write to the customer yourself, or switch to Internal note to brief your team.</div></div>'
           : '<textarea id="reply" aria-label="' + (mode === 'note' ? 'Internal note' : 'Reply') + '" placeholder="' + (mode === 'note' ? 'Write a note your team can see. Mention someone with @.' : 'Write a reply to ' + esc(cust.name.split(' ')[0])) + '"></textarea>' +
             '<div class="composer-bar"><button class="icon-btn" data-act="attach" aria-label="Attach file">' + icon('paperclip') + '</button>' +
+            '<button class="btn ghost sm" data-act="draft-save">' + icon('note', 'i-s') + 'Save draft</button>' +
             (mode === 'reply' ? '<button class="btn sm ai" data-act="ai-draft">' + icon('sparkle', 'i-s') + 'Draft with AI</button><span class="small faint" style="margin-left:6px">' + esc(winNote) + '</span>' : '') +
             '<span style="flex:1"></span><button class="btn primary sm" data-act="send">' + icon('send', 'i-s') + (mode === 'note' ? 'Add note' : 'Send') + '</button></div>') +
         '</div>';
@@ -268,15 +311,28 @@
     }
     return '<div class="page fill"><div class="inbox ' + (cur ? 'open' : '') + (A.state.showCtx ? ' show-ctx' : '') + '" id="inbox">' + listHtml + thread + ctx + '</div></div>';
   };
+  var readRequested = {};
+  window.addEventListener('nexora:data', function () { readRequested = {}; });
+  function markConversationRead(id) {
+    var conv = NX.byId(NX.conversations, id);
+    if (!conv || !conv.unread || readRequested[id]) return null;
+    readRequested[id] = true;
+    return NXActions.run(function () { return NXApi.mutate('PATCH', '/conversations/' + id, { unread: false }); }, null, 'Could not mark the conversation as read');
+  }
   A.mounts.inbox = function (c) {
     var m = c.querySelector('#msgs');
     if (m) m.scrollTop = m.scrollHeight;
     var b = c.querySelector('#inbox-back');
     if (b && window.innerWidth <= 900) b.style.display = '';
+    if (A.route().sub) void markConversationRead(A.route().sub);
     A.renderNav();
   };
+  A.actions['open-conversation'] = function (el) {
+    var id = el.getAttribute('data-id');
+    if (A.route().sub !== id) location.hash = '#/inbox/' + id;
+    return markConversationRead(id);
+  };
   function curConv() { return NX.byId(NX.conversations, A.route().sub); }
-  function nowTime() { var d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
   A.actions['inbox-tab'] = function (el) { A.state.inboxTab = el.getAttribute('data-v'); A.render(); };
   A.actions['inbox-q'] = function (el) {
     A.state.inboxQ = el.value; var pos = el.selectionStart; A.render();
@@ -291,26 +347,25 @@
   A.actions['toggle-ctx'] = function () { A.state.showCtx = !A.state.showCtx; document.getElementById('inbox').classList.toggle('show-ctx', A.state.showCtx); };
   A.actions.composer = function (el) { A.state.composer = el.getAttribute('data-v'); A.render(); var t = document.getElementById('reply'); if (t) t.focus(); };
   A.actions.takeover = function () {
-    var c = curConv(); var me = NX.employee(A.me.emp);
-    c.handler = 'human'; c.assignee = A.me.emp; A.state.composer = 'reply';
-    c.messages.push({ dir: 'event', text: me.name + ' took over from ' + c.agent });
-    NX.audit.unshift({ when: '24 Nov 2026, ' + nowTime() + ':00', actor: me.name, type: 'Employee', action: 'Took over conversation from AI', res: 'Conversation ' + c.id, result: 'Success', approval: '' });
-    A.render(); UI.toast('You are now handling this conversation. AI replies are paused.');
-    var t = document.getElementById('reply'); if (t) t.focus();
+    var c = curConv(); if (!c) return;
+    A.state.composer = 'reply';
+    return NXActions.run(function () { return NXApi.mutate('POST', '/conversations/' + c.id + '/takeover', {}); }, 'You are now handling this conversation. AI replies are paused.');
   };
   A.actions.handback = function () {
-    var c = curConv(); var me = NX.employee(A.me.emp);
-    c.handler = 'ai'; c.agent = c.agent || 'Customer Support Agent';
-    c.messages.push({ dir: 'event', text: me.name + ' handed the conversation back to ' + c.agent });
-    A.render(); UI.toast('Handed back to ' + c.agent);
+    var c = curConv(); if (!c) return;
+    return NXActions.run(async function () {
+      await NXApi.mutate('PATCH', '/conversations/' + c.id, { mode: 'ai' });
+      await NXApi.mutate('POST', '/conversations/' + c.id + '/assign', { employeeId: null, teamId: null });
+    }, 'Handed back to AI');
   };
   A.actions.send = function () {
     var c = curConv(), t = document.getElementById('reply');
-    if (!t.value.trim()) { t.focus(); t.style.borderColor = 'var(--bad)'; t.placeholder = 'Write something before sending.'; return; }
-    if (A.state.composer === 'note') c.messages.push({ dir: 'note', text: t.value.trim(), at: nowTime() });
-    else c.messages.push({ dir: 'out', text: t.value.trim(), at: nowTime(), status: 'sent', by: A.me.emp });
-    c.time = nowTime();
-    A.render(); UI.toast(A.state.composer === 'note' ? 'Note added' : 'Message sent on ' + NX.channels[c.channel].name);
+    if (!c || !t) return;
+    var text = t.value.trim(), note = A.state.composer === 'note';
+    if (!text) { t.focus(); t.style.borderColor = 'var(--bad)'; t.placeholder = 'Write something before sending.'; return; }
+    return NXActions.run(function () {
+      return NXApi.mutate('POST', '/conversations/' + c.id + (note ? '/notes' : '/reply'), { text: text });
+    }, note ? 'Note added' : 'Message sent on ' + NX.channels[c.channel].name);
   };
   A.actions['ai-draft'] = function () {
     var c = curConv();
@@ -319,15 +374,68 @@
     t.focus();
     UI.toast('Draft added. Review before sending.');
   };
-  A.actions['draft-send'] = function () { var c = curConv(); c.messages.push({ dir: 'out', text: c.draft, at: nowTime(), status: 'sent', by: A.me.emp }); c.draft = null; A.render(); UI.toast('Message sent on ' + NX.channels[c.channel].name); };
-  A.actions['draft-edit'] = function () { var c = curConv(); var d = c.draft; c.draft = null; A.state.composer = 'reply'; A.render(); var t = document.getElementById('reply'); t.value = d; t.focus(); };
-  A.actions['draft-discard'] = function () { var c = curConv(); var d = c.draft; c.draft = null; A.render(); UI.toast('Suggestion discarded', function () { c.draft = d; A.render(); }); };
-  A.actions['conv-resolve'] = function () { var c = curConv(); c.status = 'Resolved'; A.render(); UI.toast('Conversation resolved', function () { c.status = 'Open'; A.render(); }); };
-  A.actions['conv-reopen'] = function () { var c = curConv(); c.status = 'Open'; A.render(); };
-  A.actions['conv-assign'] = function (el) { var c = curConv(); c.assignee = el.value || null; A.render(); UI.toast(el.value ? 'Assigned to ' + NX.employee(el.value).name : 'Conversation unassigned'); };
-  A.actions['conv-prio'] = function (el) { curConv().prio = +el.value; A.render(); };
-  A.actions['conv-cat'] = function (el) { curConv().cat = el.value; A.render(); };
-  A.actions.attach = function () { UI.toast('Attachments up to 16 MB are sent where the channel supports them.'); };
+  A.actions['draft-save'] = function () {
+    var c = curConv(), t = document.getElementById('reply');
+    if (!c || !t || !t.value.trim()) { UI.toast('Write something before saving a draft'); return; }
+    return NXActions.run(function () { return NXApi.mutate('POST', '/conversations/' + c.id + '/drafts', { text: t.value.trim() }); }, 'Draft saved');
+  };
+  A.actions['draft-send'] = function () {
+    var c = curConv(); if (!c || !c.draft) return;
+    var text = c.draft;
+    return NXActions.run(async function () {
+      await NXApi.mutate('POST', '/conversations/' + c.id + '/reply', { text: text });
+      await NXApi.mutate('POST', '/conversations/' + c.id + '/drafts', { text: null });
+    }, 'Message sent on ' + NX.channels[c.channel].name);
+  };
+  A.actions['draft-edit'] = function () {
+    var c = curConv(), t = document.getElementById('reply');
+    if (!c || !t || !c.draft) return;
+    A.state.composer = 'reply'; t.value = c.draft; t.focus();
+  };
+  A.actions['draft-discard'] = function () {
+    var c = curConv(); if (!c) return;
+    return NXActions.run(function () { return NXApi.mutate('POST', '/conversations/' + c.id + '/drafts', { text: null }); }, 'Suggestion discarded');
+  };
+  A.actions['conv-resolve'] = function () {
+    var c = curConv(); if (!c) return;
+    return NXActions.run(function () { return NXApi.mutate('PATCH', '/conversations/' + c.id, { status: 'Resolved' }); }, 'Conversation resolved');
+  };
+  A.actions['conv-reopen'] = function () {
+    var c = curConv(); if (!c) return;
+    return NXActions.run(function () { return NXApi.mutate('PATCH', '/conversations/' + c.id, { status: 'Open' }); }, 'Conversation reopened');
+  };
+  A.actions['conv-assign'] = function (el) {
+    var c = curConv(); if (!c) return;
+    var id = el.value || null;
+    return NXActions.run(function () { return NXApi.mutate('POST', '/conversations/' + c.id + '/assign', { employeeId: id }); }, id ? 'Assigned to ' + NX.employee(id).name : 'Conversation unassigned');
+  };
+  A.actions['conv-prio'] = function (el) {
+    var c = curConv(); if (!c) return;
+    var prio = Number(el.value);
+    return NXActions.run(function () { return NXApi.mutate('PATCH', '/conversations/' + c.id, { priority: prio }); }, 'Priority updated');
+  };
+  A.actions['conv-cat'] = function (el) {
+    var c = curConv(); if (!c) return;
+    var cat = el.value;
+    return NXActions.run(function () { return NXApi.mutate('PATCH', '/conversations/' + c.id, { category: cat }); }, 'Category updated');
+  };
+  A.actions.attach = function () {
+    var c = curConv(); if (!c) return;
+    var input = document.createElement('input');
+    input.type = 'file'; input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', function () {
+      var file = input.files && input.files[0];
+      if (file) {
+        void NXActions.run(async function () {
+          await NXActions.uploadFile(file, { conversationId: c.id });
+          await NXApi.mutate('POST', '/conversations/' + c.id + '/notes', { text: 'Attached file: ' + file.name });
+        }, 'File attached and noted');
+      }
+      input.remove();
+    });
+    input.click();
+  };
 
   /* ================= Customers ================= */
   A.state.custSort = { k: 'value', d: -1 };
@@ -361,16 +469,63 @@
   A.actions['cust-q'] = function (el) { A.state.custQ = el.value; var p = el.selectionStart; A.render(); var n = document.querySelector('[data-input="cust-q"]'); n.focus(); n.setSelectionRange(p, p); };
   A.actions['cust-tag'] = function (el) { A.state.custTag = el.value; A.render(); };
   A.actions['open-customer'] = function (el) { openCustomer(el.getAttribute('data-id')); };
-  A.actions.export = function () { UI.toast('Export started. You will be notified when the CSV is ready to download.'); };
+  A.actions.export = function () {
+    var r = A.route(), path = '/analytics/export/customers', file = 'nexora-customers.csv', label = 'customers';
+    if (r.page === 'orders') {
+      path = '/analytics/export/orders'; file = 'nexora-orders.csv'; label = 'orders';
+    } else if (r.page === 'analytics') {
+      var dataset = r.sub === 'communication' ? 'conversations' : r.sub === 'people' ? 'employees' : 'sales';
+      path = '/analytics/export/' + dataset; file = 'nexora-' + dataset + '.csv'; label = dataset;
+    } else if (r.page === 'settings' && r.sub === 'audit') {
+      path = '/audit-logs/export'; file = 'nexora-audit-logs.json'; label = 'audit logs';
+    } else if (r.page === 'settings' && r.sub === 'data') {
+      path = '/data/export'; file = 'nexora-workspace-data.json'; label = 'workspace data';
+    }
+    return NXActions.download(path, file, 'Could not export ' + label);
+  };
   A.actions['review-dup'] = function (el) {
     var d = NX.customer(el.getAttribute('data-id')), o = NX.customer(d.duplicateOf);
+    if (!d || !o) return;
     var row = function (l, a, b) { return '<tr><td class="muted">' + l + '</td><td>' + esc(a) + '</td><td>' + esc(b) + '</td></tr>'; };
     UI.modal({ title: 'Review possible duplicate', wide: true, ok: 'Merge into ' + o.name,
       body: '<p class="muted" style="margin-bottom:12px">Merging moves conversations, orders and notes to the record you keep. The other record is archived, and the merge is recorded in the audit log.</p><div class="table-wrap card"><table class="t"><thead><tr><th></th><th>Keep: ' + esc(o.name) + '</th><th>Merge: ' + esc(d.name) + '</th></tr></thead><tbody>' +
         row('Company', o.company, d.company) + row('Phone', o.phone, d.phone) + row('Email', o.email, d.email) + row('Orders', o.orders, d.orders) + row('Since', o.since, d.since) + '</tbody></table></div>',
-      onOk: function () { o.orders += d.orders; o.value += d.value; NX.customers.splice(NX.customers.indexOf(d), 1); A.render(); UI.toast('Customers merged'); }
+      onOk: function () { return NXActions.run(function () { return NXApi.mutate('POST', '/customers/' + o.id + '/merge', { sourceId: d.id }); }, 'Customers merged'); }
     });
   };
+  function customerNoteDate(note) {
+    var raw = note.createdAt || note.at || '';
+    if (!raw) return '';
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw);
+    return d.toLocaleDateString() + ', ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function customerNotesHtml(id) {
+    var notes = (NX.customerNotes || []).filter(function (n) { return n.customerId === id; })
+      .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
+    if (!notes.length) return '<p class="small muted">No internal notes yet.</p>';
+    return notes.map(function (n) {
+      return '<div class="callout mt-8"><div>' + esc(n.text) + ' <span class="faint">' + esc(n.authorName || n.authorId || 'Team') + ', ' + esc(customerNoteDate(n)) + '</span></div></div>';
+    }).join('');
+  }
+
+  function updateCustomerNotes(id, root) {
+    var holder = root && root.querySelector('#customer-notes');
+    if (holder) holder.innerHTML = customerNotesHtml(id);
+  }
+
+  async function loadCustomerNotes(id, root) {
+    try {
+      var notes = await NXApi.request('GET', '/customers/' + id + '/notes');
+      var keep = (NX.customerNotes || []).filter(function (n) { return n.customerId !== id; });
+      Object.assign(NX, { customerNotes: keep.concat(Array.isArray(notes) ? notes : []) });
+      updateCustomerNotes(id, root);
+    } catch (e) {
+      /* Keep the bootstrap copy when a refresh is unavailable. */
+    }
+  }
+
   function openCustomer(id) {
     var c = NX.customer(id); if (!c) return;
     var orders = NX.orders.filter(function (o) { return o.customer === id; });
@@ -387,15 +542,36 @@
         '<h3 style="margin:18px 0 8px">Tags</h3><div class="row wrap" style="gap:6px">' + c.tags.map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '<button class="btn ghost sm" data-act="add-tag" data-id="' + c.id + '">' + icon('plus', 'i-s') + 'Add tag</button></div>' +
         '<h3 style="margin:18px 0 8px">Conversations</h3>' + (convs.length ? convs.map(function (v) { return '<a class="row between" style="padding:8px 0;border-bottom:1px solid var(--border);color:var(--text)" href="#/inbox/' + v.id + '"><span class="row">' + UI.chan(v.channel) + esc(v.cat) + '</span>' + UI.status(v.status) + '</a>'; }).join('') : '<p class="small muted">No conversations yet.</p>') +
         '<h3 style="margin:18px 0 8px">Orders</h3>' + (orders.length ? orders.map(function (o) { return '<a class="row between" style="padding:8px 0;border-bottom:1px solid var(--border);color:var(--text)" href="#/orders/o/' + o.id + '"><span><b style="font-weight:600">' + o.id + '</b> <span class="faint small">' + esc(o.date) + '</span></span><span class="row"><span class="num">' + money(NX.orderTotal(o), { dp: 0 }) + '</span>' + UI.status(o.status) + '</span></a>'; }).join('') : '<p class="small muted">No orders yet.</p>') +
-        '<h3 style="margin:18px 0 8px">Internal notes</h3><div class="callout"><div>Prefers delivery before 10:00. Gate code at the side entrance. <span class="faint">Esi Quaye, 12 Nov</span></div></div>' +
-        '<textarea class="input mt-8" placeholder="Add a note for your team" aria-label="New note"></textarea>',
-      foot: '<button class="btn" data-act="edit-customer" data-id="' + c.id + '">' + icon('edit', 'i-s') + 'Edit</button>' + (A.can('orders') ? '<button class="btn primary" data-act="new-order" data-customer="' + c.id + '">' + icon('plus', 'i-s') + 'New order</button>' : '')
+        '<h3 style="margin:18px 0 8px">Internal notes</h3><div id="customer-notes">' + customerNotesHtml(id) + '</div>' +
+        '<textarea id="customer-note-text" class="input mt-8" placeholder="Add a note for your team" aria-label="New internal note"></textarea>' +
+        '<button class="btn sm mt-8" data-act="customer-note-add" data-id="' + c.id + '">' + icon('plus', 'i-s') + 'Add note</button>',
+      foot: '<button class="btn" data-act="edit-customer" data-id="' + c.id + '">' + icon('edit', 'i-s') + 'Edit</button>' + (A.can('orders') ? '<button class="btn primary" data-act="new-order" data-customer="' + c.id + '">' + icon('plus', 'i-s') + 'New order</button>' : ''),
+      onMount: function (drawer) { void loadCustomerNotes(id, drawer); }
     });
   }
+  A.actions['customer-note-add'] = function (el) {
+    var id = el.getAttribute('data-id');
+    var drawer = el.closest('.drawer');
+    var input = drawer && drawer.querySelector('#customer-note-text');
+    var text = input ? input.value.trim() : '';
+    if (!text) { UI.toast('Enter a note first'); return; }
+    return NXActions.run(function () { return NXApi.mutate('POST', '/customers/' + id + '/notes', { text: text }); }, 'Internal note added').then(function (note) {
+      if (!note || !note.id) return note;
+      var keep = (NX.customerNotes || []).filter(function (n) { return n.customerId !== id; });
+      Object.assign(NX, { customerNotes: keep.concat([note]) });
+      updateCustomerNotes(id, drawer);
+      if (input) input.value = '';
+      return note;
+    });
+  };
   A.actions['add-tag'] = function (el) {
-    var c = NX.customer(el.getAttribute('data-id'));
-    UI.modal({ title: 'Add tag', body: UI.field({ label: 'Tag', required: true, placeholder: 'For example VIP' }), ok: 'Add tag',
-      onOk: function (m) { if (!UI.validate(m)) return false; c.tags.push(m.querySelector('input').value.trim()); A.render(); UI.toast('Tag added'); } });
+    var c = NX.customer(el.getAttribute('data-id')); if (!c) return;
+    UI.modal({ title: 'Add tag', body: UI.field({ label: 'Tag', required: true, placeholder: 'For example VIP', name: 'tag' }), ok: 'Add tag',
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var tag = m.querySelector('[name=tag]').value.trim();
+        return NXActions.run(function () { return NXApi.mutate('PATCH', '/customers/' + c.id, { tags: (c.tags || []).concat([tag]) }); }, 'Tag added');
+      } });
   };
   function customerForm(c) {
     c = c || {};
@@ -410,16 +586,22 @@
       onOk: function (m) {
         if (!UI.validate(m)) return false;
         var f = readForm(m);
-        var dup = NX.customers.filter(function (c) { return c.phone.replace(/\s/g, '') === f.phone.replace(/\s/g, ''); })[0];
-        var id = 'c' + (NX.customers.length + 20);
-        NX.customers.unshift({ id: id, name: f.name, company: f.company, phone: f.phone, email: f.email, city: f.city || 'Accra', tags: ['New'], value: 0, orders: 0, since: 'Nov 2026', owner: f.owner, last: 'Just now', duplicateOf: dup ? dup.id : undefined });
-        location.hash = '#/customers'; A.render();
-        UI.toast(dup ? 'Customer created. It may duplicate ' + dup.name + '.' : 'Customer created');
+        var dup = NX.customers.filter(function (c) { return String(c.phone || '').replace(/\s/g, '') === f.phone.replace(/\s/g, ''); })[0];
+        var body = { name: f.name, company: f.company, phone: f.phone, email: f.email, city: f.city || 'Accra', tags: ['New'], value: 0, orders: 0, since: 'Nov 2026', owner: f.owner, last: 'Just now' };
+        if (dup) body.duplicateOf = dup.id;
+        return NXActions.run(function () { return NXApi.mutate('POST', '/customers', body); }, dup ? 'Customer created. It may duplicate ' + dup.name + '.' : 'Customer created').then(function (result) {
+          if (result) A.go('#/customers');
+          return result;
+        });
       } });
   };
   A.actions['edit-customer'] = function (el) {
-    var c = NX.customer(el.getAttribute('data-id'));
+    var c = NX.customer(el.getAttribute('data-id')); if (!c) return;
     UI.modal({ title: 'Edit customer', body: customerForm(c), ok: 'Save changes',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = readForm(m); Object.keys(f).forEach(function (k) { c[k] = f[k]; }); A.render(); UI.toast('Customer updated'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = readForm(m);
+        return NXActions.run(function () { return NXApi.mutate('PATCH', '/customers/' + c.id, f); }, 'Customer updated');
+      } });
   };
 })();

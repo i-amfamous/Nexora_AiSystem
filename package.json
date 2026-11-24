@@ -1,0 +1,38 @@
+{
+  "name": "nexora",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Nexora Unified Business Operating Platform - SRS v2.0 implementation",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "npm run build && node --test tests/*.test.js",
+    "migrate": "node dist/scripts/migrate.js",
+    "openapi": "node dist/scripts/write-openapi.js",
+    "backup": "bash scripts/backup.sh",
+    "restore": "bash scripts/restore.sh",
+    "desktop:dev": "npm run --prefix desktop dev",
+    "desktop:build:win": "npm run --prefix desktop build:win",
+    "desktop:build:mac": "npm run --prefix desktop build:mac",
+    "docker:build": "docker compose build backend",
+    "docker:up": "docker compose up -d backend",
+    "docker:down": "docker compose down"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.15.5",
+    "@types/ws": "^8.5.13",
+    "electron": "39.8.10",
+    "electron-builder": "26.18.0",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

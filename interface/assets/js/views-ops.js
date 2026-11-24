@@ -60,10 +60,10 @@
     board.addEventListener('dragover', function (e) { var col = e.target.closest('.col'); if (!col) return; e.preventDefault(); board.querySelectorAll('.col').forEach(function (x) { x.classList.toggle('drop', x === col); }); });
     board.addEventListener('drop', function (e) {
       var col = e.target.closest('.col'); if (!col || !dragging) return; e.preventDefault();
-      var l = NX.byId(NX.leads, dragging), from = l.stage, to = col.getAttribute('data-stage');
-      if (from === to) return;
-      l.stage = to; A.render();
-      UI.toast(l.name + ' moved to ' + to, function () { l.stage = from; A.render(); });
+      var l = NX.byId(NX.leads, dragging), to = col.getAttribute('data-stage');
+      if (!l || l.stage === to) return;
+      void NXActions.run(function () { return NXApi.mutate('PATCH', '/leads/' + l.id, { stage: to }); }, l.name + ' moved to ' + to);
+      dragging = null;
     });
   };
   A.actions['open-lead'] = function (el) {
@@ -74,14 +74,22 @@
         UI.field({ label: 'Owner', type: 'select', options: NX.employees.filter(function (e) { return e.role === 'sales' || e.role === 'manager'; }).map(function (e) { return [e.id, e.name]; }), value: l.owner, name: 'owner', required: true }) +
         UI.field({ label: 'Estimated value (GHS)', type: 'number', value: l.value, name: 'value', required: true, min: 0 }) +
         UI.field({ label: 'Next step', value: l.next, name: 'next' }) + '</div>' +
-        '<h3 style="margin:20px 0 8px">Log a follow-up</h3><div class="form-grid">' + UI.field({ label: 'Type', type: 'select', options: ['Call', 'Meeting', 'WhatsApp', 'Email', 'Visit'], value: 'Call', required: true }) + UI.field({ label: 'Date', type: 'date', value: '2026-11-24', required: true }) + UI.field({ label: 'Summary', type: 'textarea', span: true, placeholder: 'What was agreed?' }) + '</div>' +
+        '<h3 style="margin:20px 0 8px">Log a follow-up</h3><div class="form-grid">' + UI.field({ label: 'Type', type: 'select', options: ['Call', 'Meeting', 'WhatsApp', 'Email', 'Visit'], value: 'Call', required: true, name: 'actType' }) + UI.field({ label: 'Date', type: 'date', value: '2026-11-24', required: true, name: 'actDate' }) + UI.field({ label: 'Summary', type: 'textarea', span: true, placeholder: 'What was agreed?', name: 'actSummary' }) + '</div>' +
         (l.ai ? '<div class="callout ai mt-16">' + icon('sparkle') + '<div>Sales Agent flagged this lead after the customer asked about bulk pricing on email. Suggested next step: confirm quantities, then send a quotation.</div></div>' : ''),
       foot: '<button class="btn" data-close>Cancel</button><button class="btn primary" id="save-lead">Save lead</button>',
       onMount: function (d) {
         d.querySelector('#save-lead').addEventListener('click', function () {
           if (!UI.validate(d)) return;
-          var f = A.readForm(d); l.stage = f.stage; l.owner = f.owner; l.value = +f.value; l.next = f.next;
-          UI.closeAll(); A.render(); UI.toast('Lead saved');
+          var f = A.readForm(d), summary = (f.actSummary || '').trim();
+          void NXActions.run(async function () {
+            await NXApi.mutate('PATCH', '/leads/' + l.id, { stage: f.stage, owner: f.owner, value: +f.value, next: f.next });
+            if (summary) {
+              await NXApi.mutate('POST', '/sales-activities', {
+                leadId: l.id, type: f.actType, summary: summary, by: A.me.emp,
+                at: f.actDate ? new Date(f.actDate + 'T12:00:00').toISOString() : new Date().toISOString()
+              });
+            }
+          }, summary ? 'Lead saved and follow-up logged' : 'Lead saved').then(function (result) { if (result) UI.closeAll(); return result; });
         });
       } });
   };
@@ -92,7 +100,12 @@
       UI.field({ label: 'Source', type: 'select', options: ['WhatsApp', 'Email', 'Website chat', 'Referral', 'Walk-in', 'Instagram', 'Telegram'], name: 'source', required: true }) +
       UI.field({ label: 'Estimated value (GHS)', type: 'number', name: 'value', required: true, min: 0, err: 'Enter a value of 0 or more.' }) +
       UI.field({ label: 'Owner', type: 'select', options: NX.employees.filter(function (e) { return e.role === 'sales' || e.role === 'manager'; }).map(function (e) { return [e.id, e.name]; }), value: A.me.emp, name: 'owner', required: true }) + '</div>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); NX.leads.unshift({ id: 'l' + Date.now(), name: f.name, contact: f.contact, value: +f.value, stage: 'New', owner: f.owner, next: 'First contact', source: f.source }); location.hash = '#/sales'; A.render(); UI.toast('Lead created'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        var body = { name: f.name, contact: f.contact, source: f.source, value: +f.value, stage: 'New', owner: f.owner, next: 'First contact' };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/leads', body); }, 'Lead created').then(function (result) { if (result) A.go('#/sales'); return result; });
+      } });
   };
 
   /* ================= Orders ================= */
@@ -137,16 +150,20 @@
     });
   }
   A.actions['order-next'] = function (el) {
-    var o = NX.byId(NX.orders, el.getAttribute('data-id'));
+    var o = NX.byId(NX.orders, el.getAttribute('data-id')); if (!o) return;
     var flow = ['Draft', 'Confirmed', 'Processing', 'Out for delivery', 'Delivered'];
-    var prev = o.status; o.status = flow[flow.indexOf(o.status) + 1];
-    A.render(); openOrder(o.id); UI.toast(o.id + ' marked as ' + o.status.toLowerCase(), function () { o.status = prev; A.render(); });
+    var next = flow[flow.indexOf(o.status) + 1]; if (!next) return;
+    return NXActions.run(function () { return NXApi.mutate('POST', '/orders/' + o.id + '/status', { status: next }); }, o.id + ' marked as ' + next.toLowerCase()).then(function (result) { if (result) UI.closeAll(); return result; });
   };
   A.actions['order-cancel'] = function (el) {
-    var o = NX.byId(NX.orders, el.getAttribute('data-id'));
-    UI.modal({ title: 'Cancel ' + o.id + '?', ok: 'Cancel order', body: '<p>Reserved stock returns to inventory. If the customer has paid, record the refund in Finance, where it will need approval.</p>' + '<div class="mt-16">' + UI.field({ label: 'Reason', type: 'textarea', required: true, err: 'Give a reason so your team understands why.' }) + '</div>',
+    var o = NX.byId(NX.orders, el.getAttribute('data-id')); if (!o) return;
+    UI.modal({ title: 'Cancel ' + o.id + '?', ok: 'Cancel order', body: '<p>Reserved stock returns to inventory. If the customer has paid, record the refund in Finance, where it will need approval.</p>' + '<div class="mt-16">' + UI.field({ label: 'Reason', type: 'textarea', required: true, name: 'reason', err: 'Give a reason so your team understands why.' }) + '</div>',
       foot: '<button class="btn" data-close>Keep order</button><button class="btn danger solid" data-ok>Cancel order</button>',
-      onOk: function (m) { if (!UI.validate(m)) return false; o.status = 'Cancelled'; A.render(); UI.toast(o.id + ' cancelled'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var reason = m.querySelector('[name=reason]').value.trim();
+        return NXActions.run(function () { return NXApi.mutate('POST', '/orders/' + o.id + '/cancel', { reason: reason }); }, o.id + ' cancelled');
+      } });
   };
   A.actions['new-order'] = function (el) {
     var cust = el && el.getAttribute ? el.getAttribute('data-customer') : '';
@@ -185,9 +202,11 @@
         m.querySelector('#lineerr').style.display = valid.length ? 'none' : '';
         if (!ok || !valid.length) return false;
         var f = A.readForm(m);
-        var id = 'ORD-' + (10483 + NX.orders.length - 12);
-        NX.orders.unshift({ id: id, customer: f.customer, date: 'Just now', items: valid.map(function (l) { return [l.p, l.q]; }), status: 'Confirmed', pay: 'Unpaid', by: A.me.emp, channel: f.channel });
-        location.hash = '#/orders'; A.render(); UI.toast(id + ' created');
+        var body = { customer: f.customer, channel: f.channel, currency: 'GHS', items: valid.map(function (l) { return [l.p, l.q]; }) };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/orders', body); }, 'Order created').then(function (result) {
+          if (result) A.go('#/orders');
+          return result;
+        });
       } });
   };
 
@@ -242,11 +261,13 @@
         '<p class="small mt-12" id="negerr" style="color:var(--bad);display:none">This would take stock below zero. Check the quantity or do a stock count correction.</p>',
       onOk: function (m) {
         if (!UI.validate(m)) return false;
-        var f = A.readForm(m); var q = +f.qty; var neg = f.type === 'Damaged or lost';
+        var f = A.readForm(m), q = +f.qty, neg = f.type === 'Damaged or lost';
         if (neg && q > p.stock) { m.querySelector('#negerr').style.display = ''; return false; }
-        var d = neg ? -q : q; p.stock += d; p.threshold = +f.thr;
-        NX.movements.unshift({ id: 'm' + Date.now(), when: 'Just now', product: p.id, type: neg ? 'Adjustment' : f.type.indexOf('Return') === 0 ? 'Return' : 'Received', qty: d, ref: f.ref, by: A.me.emp, after: p.stock });
-        A.render(); UI.toast('Stock updated. ' + p.name + ' now ' + p.stock);
+        var delta = neg ? -q : q;
+        return NXActions.run(async function () {
+          await NXApi.mutate('POST', '/products/' + p.id + '/adjust', { delta: delta, reason: f.ref, reference: f.ref });
+          await NXApi.mutate('PATCH', '/products/' + p.id, { threshold: +f.thr, thr: +f.thr });
+        }, 'Stock updated for ' + p.name);
       } });
   };
   A.actions['new-product'] = function () {
@@ -256,14 +277,24 @@
       UI.field({ label: 'Selling price (GHS)', type: 'number', required: true, min: 0, name: 'price' }) + UI.field({ label: 'Cost price (GHS)', type: 'number', min: 0, name: 'cost' }) +
       UI.field({ label: 'Opening stock', type: 'number', required: true, min: 0, name: 'stock', value: '0' }) + UI.field({ label: 'Low-stock alert at', type: 'number', required: true, min: 0, name: 'thr', value: '5' }) +
       UI.field({ label: 'Supplier', type: 'select', options: NX.suppliers.map(function (s) { return [s.id, s.name]; }), name: 'sup', required: true }) + UI.field({ label: 'Description', type: 'textarea', name: 'desc', span: true }) + '</div>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); NX.products.unshift({ id: 'p' + Date.now(), sku: f.sku, name: f.name, cat: f.cat, price: +f.price, cost: +f.cost || 0, stock: +f.stock, threshold: +f.thr, supplier: f.sup, sold30: 0 }); A.go('#/inventory'); UI.toast('Product created'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        var body = { sku: f.sku, name: f.name, cat: f.cat, category: f.cat, price: +f.price, cost: +f.cost || 0, stock: +f.stock, threshold: +f.thr, thr: +f.thr, supplier: f.sup, sup: f.sup, description: f.desc, desc: f.desc };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/products', body); }, 'Product created').then(function (result) { if (result) A.go('#/inventory'); return result; });
+      } });
   };
   A.actions['new-pr'] = function () {
     UI.modal({ title: 'New purchase request', ok: 'Submit for approval', body: '<div class="form-grid">' +
       UI.field({ label: 'Supplier', type: 'select', options: NX.suppliers.map(function (s) { return [s.id, s.name]; }), name: 'sup', required: true }) +
       UI.field({ label: 'Estimated total (GHS)', type: 'number', min: 1, required: true, name: 'total' }) +
       UI.field({ label: 'Items', type: 'textarea', required: true, name: 'items', span: true, placeholder: 'Product and quantity, one per line' }) + '</div><p class="hint mt-12">Requests above GHS 10,000 need a department manager to approve.</p>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); NX.purchaseRequests.unshift({ id: 'PR-0' + (222 + NX.purchaseRequests.length - 4), supplier: f.sup, items: f.items.split('\n').join(', '), total: +f.total, status: 'Pending approval', by: NX.employee(A.me.emp).name, byType: 'human', date: 'Today' }); A.render(); UI.toast('Purchase request submitted for approval'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        var body = { supplier: f.sup, sup: f.sup, items: f.items.split('\n').join(', '), total: +f.total, status: 'Pending approval', by: NX.employee(A.me.emp).name, byType: 'human', date: 'Today' };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/purchase-requests', body); }, 'Purchase request submitted for approval').then(function (result) { if (result) A.go('#/inventory/requests'); return result; });
+      } });
   };
 
   /* ================= Finance ================= */
@@ -316,18 +347,21 @@
         UI.field({ label: 'Reference', required: true, name: 'ref', placeholder: 'Slip, receipt or transaction ID' }) + '</div>',
       onOk: function (m) {
         if (!UI.validate(m)) return false;
-        var f = A.readForm(m); var amt = +f.amt;
-        v.paid += amt; v.status = v.paid >= v.total ? 'Paid' : 'Partially paid';
-        NX.payments.unshift({ id: 'PAY-' + (8842 + NX.payments.length - 5), invoice: v.id, customer: v.customer, amount: amt, method: f.method, when: 'Just now', verified: false, provider: '', ref: f.ref, by: NX.employee(A.me.emp).name });
-        A.render(); UI.toast('Payment of ' + money(amt) + ' recorded');
+        var f = A.readForm(m);
+        var body = { invoice: v.id, amount: +f.amt, method: f.method, reference: f.ref, ref: f.ref, date: f.date };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/payments', body); }, 'Payment recorded');
       } });
   };
   A.actions.remind = function (el) {
     var v = NX.byId(NX.invoices, el.getAttribute('data-id')); var c = NX.customer(v.customer);
     UI.modal({ title: 'Send payment reminder', ok: 'Send reminder',
-      body: UI.field({ label: 'Send via', type: 'select', options: ['WhatsApp ' + c.phone, 'Email ' + c.email], required: true }) +
-        '<div class="mt-12">' + UI.field({ label: 'Message', type: 'textarea', required: true, value: 'Hello ' + c.name.split(' ')[0] + ', this is a friendly reminder that invoice ' + v.id + ' for ' + money(v.total - v.paid) + ' was due on ' + v.due + '. You can pay by bank transfer or Mobile Money. Thank you, ' + NX.business.name + '.' }) + '</div>',
-      onOk: function (m) { if (!UI.validate(m)) return false; UI.toast('Reminder sent to ' + c.name); } });
+      body: UI.field({ label: 'Send via', type: 'select', options: [['whatsapp', 'WhatsApp ' + c.phone], ['email', 'Email ' + c.email]], required: true, name: 'channel' }) +
+        '<div class="mt-12">' + UI.field({ label: 'Message', type: 'textarea', required: true, name: 'message', value: 'Hello ' + c.name.split(' ')[0] + ', this is a friendly reminder that invoice ' + v.id + ' for ' + money(v.total - v.paid) + ' was due on ' + v.due + '. You can pay by bank transfer or Mobile Money. Thank you, ' + NX.business.name + '.' }) + '</div>',
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        return NXActions.run(function () { return NXApi.mutate('POST', '/invoices/' + v.id + '/reminder', { channel: f.channel, message: f.message }); }, 'Reminder sent to ' + c.name);
+      } });
   };
   A.actions['new-invoice'] = function (el) {
     var oid = el && el.getAttribute ? el.getAttribute('data-order') : '';
@@ -337,7 +371,12 @@
       UI.field({ label: 'Linked order', type: 'select', options: [['', 'None']].concat(NX.orders.map(function (x) { return [x.id, x.id + ', ' + money(NX.orderTotal(x), { dp: 0 })]; })), value: oid, name: 'order' }) +
       UI.field({ label: 'Amount (GHS)', type: 'number', min: 0.01, required: true, value: o ? NX.orderTotal(o) : '', name: 'amt' }) +
       UI.field({ label: 'Due date', type: 'date', required: true, value: '2026-12-24', name: 'due' }) + '</div>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); NX.invoices.unshift({ id: 'INV-' + (2612 + NX.invoices.length - 8), customer: f.cust, order: f.order, issued: '24 Nov 2026', due: new Date(f.due + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }), total: +f.amt, paid: 0, status: 'Sent' }); A.go('#/finance'); UI.toast('Invoice created'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        var body = { customer: f.cust, cust: f.cust, order: f.order, amount: +f.amt, amt: +f.amt, total: +f.amt, due: f.due };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/invoices', body); }, 'Invoice created').then(function (result) { if (result) A.go('#/finance'); return result; });
+      } });
   };
   A.actions['new-expense'] = function () {
     UI.modal({ title: 'Record expense', ok: 'Submit expense', body: '<div class="form-grid">' +
@@ -346,10 +385,38 @@
       UI.field({ label: 'Date', type: 'date', required: true, value: '2026-11-24', name: 'date' }) +
       UI.field({ label: 'Receipt', type: 'file', name: 'file' }) +
       UI.field({ label: 'Description', required: true, span: true, name: 'desc' }) + '</div><p class="hint mt-12">Expenses above GHS 1,000 go to the business owner for approval.</p>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); NX.expenses.unshift({ id: 'EXP-' + (513 + NX.expenses.length - 6), date: '24 Nov', cat: f.cat, desc: f.desc, amount: +f.amt, by: A.me.emp, status: +f.amt > 1000 ? 'Pending approval' : 'Approved' }); A.go('#/finance/expenses'); UI.toast('Expense submitted'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        var input = m.querySelector('[name=file]'), file = input && input.files && input.files[0];
+        return NXActions.run(async function () {
+          var uploaded = file ? await NXActions.uploadFile(file, {}) : null;
+          var body = { category: f.cat, cat: f.cat, amount: +f.amt, amt: +f.amt, date: f.date, description: f.desc, desc: f.desc, status: +f.amt > 1000 ? 'Pending approval' : 'Approved' };
+          if (uploaded && uploaded.id) body.receiptFileId = uploaded.id;
+          return NXApi.mutate('POST', '/expenses', body);
+        }, 'Expense submitted').then(function (result) { if (result) A.go('#/finance/expenses'); return result; });
+      } });
   };
 
   /* ================= Employees ================= */
+  var MATRIX_PERMISSIONS = {
+    customers: ['customers:read', 'customers:create', 'customers:update', 'customers:merge'],
+    inbox: ['inbox:read', 'inbox:respond', 'inbox:assign', 'inbox:categorise', 'inbox:takeover'],
+    orders: ['orders:read', 'orders:create', 'orders:update', 'orders:cancel'],
+    inventory: ['inventory:read', 'inventory:create', 'inventory:adjust'],
+    finance: ['finance:read', 'finance:create', 'finance:update', 'finance:verify', 'finance:approve'],
+    employees: ['employees:read', 'employees:invite', 'employees:update', 'employees:deactivate'],
+    automation: ['workflows:read', 'workflows:create', 'workflows:update', 'workflows:execute'],
+    agents: ['agents:read', 'agents:configure', 'agents:approve'],
+    integrations: ['integrations:read', 'integrations:connect', 'integrations:disconnect'],
+    audit: ['audit:read', 'audit:export']
+  };
+  var LEVEL_PERMISSIONS = {
+    m: ['customers:read', 'customers:create', 'customers:update', 'customers:merge', 'inbox:read', 'inbox:respond', 'inbox:assign', 'inbox:categorise', 'inbox:takeover', 'orders:read', 'orders:create', 'orders:update', 'orders:cancel', 'inventory:read', 'inventory:create', 'inventory:adjust', 'finance:read', 'finance:create', 'finance:update', 'finance:verify', 'finance:approve', 'employees:read', 'employees:invite', 'employees:update', 'employees:deactivate', 'workflows:read', 'workflows:create', 'workflows:update', 'workflows:execute', 'agents:read', 'agents:configure', 'agents:approve', 'integrations:read', 'integrations:connect', 'integrations:disconnect', 'audit:read', 'audit:export'],
+    e: ['customers:read', 'customers:create', 'customers:update', 'inbox:read', 'inbox:respond', 'inbox:assign', 'inbox:categorise', 'orders:read', 'orders:update', 'inventory:read', 'inventory:adjust', 'finance:read', 'employees:read', 'workflows:read', 'workflows:update', 'agents:read', 'integrations:read', 'audit:read'],
+    v: ['customers:read', 'inbox:read', 'orders:read', 'inventory:read', 'finance:read', 'employees:read', 'workflows:read', 'agents:read', 'integrations:read', 'audit:read'],
+    n: []
+  };
   A.views.employees = function (r) {
     var tab = r.sub || '';
     var body;
@@ -376,32 +443,48 @@
         mods.map(function (m, i) {
           return '<tr><td class="strong">' + m[0] + '</td>' + NX.roles.map(function (r) {
             var v = lvl[r.id][i]; var locked = r.id === 'owner';
-            return '<td><select class="input input-sm" style="width:96px;margin:0 auto" aria-label="' + esc(r.name) + ' access to ' + m[0] + '"' + (locked || !A.isAdmin() ? ' disabled' : '') + ' data-change="perm-change">' + ['m', 'e', 'v', 'n'].map(function (k) { return '<option' + (k === v ? ' selected' : '') + '>' + label[k] + '</option>'; }).join('') + '</select></td>';
+            return '<td><select class="input input-sm" style="width:96px;margin:0 auto" aria-label="' + esc(r.name) + ' access to ' + m[0] + '"' + (locked || !A.isAdmin() ? ' disabled' : '') + ' data-change="perm-change" data-role="' + r.id + '" data-permission="' + m[1] + '">' + ['m', 'e', 'v', 'n'].map(function (k) { return '<option' + (k === v ? ' selected' : '') + '>' + label[k] + '</option>'; }).join('') + '</select></td>';
           }).join('') + '</tr>';
         }).join('') + '</tbody></table></div></div>';
     }
     return '<div class="page">' + head('Employees', active + ' active people across ' + NX.departments.length + ' departments. Each person signs in with their own account.', A.isAdmin() ? '<button class="btn" data-act="new-dept">' + icon('plus', 'i-s') + 'Department</button><button class="btn primary" data-act="invite">' + icon('plus', 'i-s') + 'Invite people</button>' : '') +
       tabBar('employees', [['', 'People', NX.employees.length], ['departments', 'Departments', NX.departments.length], ['roles', 'Roles and permissions', NX.roles.length]], tab) + body + '</div>';
   };
-  A.actions['perm-change'] = function () { UI.toast('Permission change sent for owner approval'); };
+  A.actions['perm-change'] = function (el) {
+    var role = el.getAttribute('data-role'), module = el.getAttribute('data-permission');
+    if (!role || !module) return;
+    var selected = el.options[el.selectedIndex];
+    var level = ((selected && selected.textContent) || '').charAt(0).toLowerCase();
+    if (!LEVEL_PERMISSIONS[level]) level = 'n';
+    var permissions = {};
+    (MATRIX_PERMISSIONS[module] || []).forEach(function (key) { permissions[key] = LEVEL_PERMISSIONS[level].indexOf(key) > -1; });
+    return NXActions.run(function () { return NXApi.mutate('PUT', '/roles/' + role + '/permissions', { permissions: permissions }); }, 'Permissions updated for ' + NX.role(role).name);
+  };
   A.actions['emp-menu'] = function (el) {
-    var e = NX.employee(el.getAttribute('data-id'));
+    var e = NX.employee(el.getAttribute('data-id')); if (!e) return;
     var items = [{ label: 'Change role or department', icon: 'edit', fn: function () { empEdit(e); } }];
-    if (e.status === 'invited') items.push({ label: 'Resend invite', icon: 'mail', fn: function () { UI.toast('Invite resent to ' + e.email); } });
+    if (e.status === 'invited') items.push({ label: 'Resend invite', icon: 'mail', fn: function () { void NXActions.run(function () { return NXApi.mutate('POST', '/employees/' + e.id + '/invite/resend', { email: e.email }); }, 'Invite resent to ' + e.email); } });
     if (e.status === 'active') items.push('sep', { label: 'Revoke access', icon: 'lock', danger: true, fn: function () { revoke(e); } });
-    if (e.status === 'deactivated') items.push({ label: 'Restore access', icon: 'refresh', fn: function () { e.status = 'active'; e.last = 'Restored just now'; A.render(); UI.toast(e.name + ' can sign in again'); } });
+    if (e.status === 'deactivated') items.push({ label: 'Restore access', icon: 'refresh', fn: function () { void NXActions.run(function () { return NXApi.mutate('POST', '/employees/' + e.id + '/deactivate', { active: true }); }, e.name + ' can sign in again'); } });
     UI.menu(el, items);
   };
   function empEdit(e) {
     UI.modal({ title: 'Edit ' + e.name, ok: 'Save changes', body: '<div class="form-grid">' +
       UI.field({ label: 'Role', type: 'select', options: NX.roles.filter(function (r) { return r.id !== 'owner'; }).map(function (r) { return [r.id, r.name]; }), value: e.role, required: true, name: 'role' }) +
       UI.field({ label: 'Department', type: 'select', options: NX.departments.map(function (d) { return [d.id, d.name]; }), value: e.dept, required: true, name: 'dept' }) + '</div>',
-      onOk: function (m) { var f = A.readForm(m); var sens = (f.role === 'finance' || f.role === 'admin') && f.role !== e.role; e.dept = f.dept; if (!sens) e.role = f.role; A.render(); UI.toast(sens ? 'Role change sent to the business owner for approval' : 'Changes saved'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        var body = { role: f.role, department: f.dept, dept: f.dept };
+        return NXActions.run(function () { return NXApi.mutate('POST', '/employees/' + e.id + '/role', body); }, 'Role and department updated for ' + e.name);
+      } });
   }
   function revoke(e) {
     UI.modal({ title: 'Revoke access for ' + e.name + '?', body: '<p>They will be signed out of the web, Windows and macOS apps immediately. Their records, messages and history stay in the workspace and remain attributed to them.</p><p class="mt-12 muted">Open conversations and tasks (' + e.tasksOpen + ') should be reassigned.</p>',
       foot: '<button class="btn" data-close>Keep access</button><button class="btn danger solid" data-ok>Revoke access</button>',
-      onOk: function () { e.status = 'deactivated'; e.last = 'Access revoked just now'; A.render(); UI.toast(e.name + ' can no longer sign in'); } });
+      onOk: function () {
+        return NXActions.run(function () { return NXApi.mutate('POST', '/employees/' + e.id + '/deactivate', { active: false }); }, e.name + ' can no longer sign in');
+      } });
   }
   A.actions.invite = function () {
     UI.modal({ title: 'Invite people', ok: 'Send invites', body: '<p class="muted" style="margin-bottom:14px">Each person gets their own sign-in. Shared accounts are not supported.</p>' +
@@ -414,18 +497,33 @@
         var list = f.emails.split(/[\s,;]+/).filter(Boolean);
         var bad = list.filter(function (x) { return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x); });
         if (bad.length) { var fl = m.querySelector('[name=emails]').closest('.field'); fl.classList.add('has-err'); fl.querySelector('.err').textContent = 'Check these addresses: ' + bad.join(', '); return false; }
-        list.forEach(function (x) { NX.employees.push({ id: 'e' + Date.now() + x, name: x.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }), email: x, role: f.role, dept: f.dept, status: 'invited', last: 'Invite sent just now', device: '', tasksDone: 0, tasksOpen: 0 }); });
-        A.go('#/employees'); UI.toast(list.length + ' invite' + (list.length > 1 ? 's' : '') + ' sent');
+        return NXActions.run(async function () {
+          for (var i = 0; i < list.length; i++) {
+            await NXApi.mutate('POST', '/employees/invite', {
+              email: list[i],
+              name: list[i].split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }),
+              role: f.role, department: f.dept, dept: f.dept
+            });
+          }
+        }, list.length + ' invite' + (list.length > 1 ? 's' : '') + ' sent').then(function (result) { if (result) A.go('#/employees'); return result; });
       } });
   };
   A.actions['new-dept'] = function () {
     UI.modal({ title: 'New department', ok: 'Create department', body: '<div class="form-grid">' + UI.field({ label: 'Name', required: true, name: 'name' }) + UI.field({ label: 'Department head', type: 'select', options: NX.employees.filter(function (e) { return e.status === 'active'; }).map(function (e) { return [e.id, e.name]; }), required: true, name: 'head' }) + '</div>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); NX.departments.push({ id: 'd' + Date.now(), name: f.name, head: f.head }); A.go('#/employees/departments'); UI.toast('Department created'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        return NXActions.run(function () { return NXApi.mutate('POST', '/departments', { name: f.name, head: f.head }); }, 'Department created').then(function (result) { if (result) A.go('#/employees/departments'); return result; });
+      } });
   };
   A.actions['edit-dept'] = function (el) {
     var d = NX.dept(el.getAttribute('data-id'));
     UI.modal({ title: 'Edit ' + d.name, ok: 'Save changes', body: '<div class="form-grid">' + UI.field({ label: 'Name', required: true, name: 'name', value: d.name }) + UI.field({ label: 'Department head', type: 'select', options: NX.employees.filter(function (e) { return e.status === 'active'; }).map(function (e) { return [e.id, e.name]; }), value: d.head, required: true, name: 'head' }) + '</div>',
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); d.name = f.name; d.head = f.head; A.render(); UI.toast('Department updated'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        return NXActions.run(function () { return NXApi.mutate('PATCH', '/departments/' + d.id, { name: f.name, head: f.head }); }, 'Department updated');
+      } });
   };
 
   /* ================= Tasks ================= */
@@ -457,12 +555,28 @@
       UI.field({ label: 'Priority', type: 'select', required: true, options: [['1', 'Low'], ['2', 'Normal'], ['3', 'High'], ['4', 'Urgent']], value: String(t.prio || 2), name: 'prio' }) +
       UI.field({ label: 'Status', type: 'select', required: true, options: ['To do', 'In progress', 'In review', 'Done'], value: t.status || 'To do', name: 'status' }) + '</div>';
   }
+  function taskBody(f) {
+    var e = NX.employee(f.who), dept = e ? e.dept : '';
+    return {
+      title: f.title, description: f.desc, desc: f.desc, who: f.who, due: f.due,
+      priority: +f.prio, prio: +f.prio, status: f.status, department: dept, dept: dept
+    };
+  }
   A.actions['new-task'] = function () {
-    UI.modal({ title: 'New task', ok: 'Create task', body: taskForm(), onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); var e = NX.employee(f.who); NX.tasks.unshift({ id: 't' + Date.now(), title: f.title, desc: f.desc, who: f.who, due: f.due, prio: +f.prio, status: f.status, dept: e.dept }); A.go('#/tasks'); UI.toast('Task created and ' + e.name.split(' ')[0] + ' notified'); } });
+    UI.modal({ title: 'New task', ok: 'Create task', body: taskForm(),
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m), e = NX.employee(f.who);
+        return NXActions.run(function () { return NXApi.mutate('POST', '/tasks', taskBody(f)); }, 'Task created and ' + (e ? e.name.split(' ')[0] : 'assignee') + ' notified').then(function (result) { if (result) A.go('#/tasks'); return result; });
+      } });
   };
   A.actions['open-task'] = function (el) {
-    var t = NX.byId(NX.tasks, el.getAttribute('data-id'));
+    var t = NX.byId(NX.tasks, el.getAttribute('data-id')); if (!t) return;
     UI.modal({ title: 'Edit task', ok: 'Save changes', body: taskForm(t) + (t.fromAgent ? '<div class="callout ai mt-16">' + icon('sparkle') + '<div>Created by ' + esc(t.fromAgent) + ' from a workflow. Activity on this task is recorded in the audit log.</div></div>' : ''),
-      onOk: function (m) { if (!UI.validate(m)) return false; var f = A.readForm(m); t.title = f.title; t.desc = f.desc; t.who = f.who; t.due = f.due; t.prio = +f.prio; t.status = f.status; A.render(); UI.toast('Task saved'); } });
+      onOk: function (m) {
+        if (!UI.validate(m)) return false;
+        var f = A.readForm(m);
+        return NXActions.run(function () { return NXApi.mutate('PATCH', '/tasks/' + t.id, taskBody(f)); }, 'Task saved');
+      } });
   };
 })();
