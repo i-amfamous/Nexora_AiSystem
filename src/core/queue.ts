@@ -21,11 +21,11 @@ export interface JobHandler {
 /** Durable background queue. The Store abstraction keeps it portable; a Redis/BullMQ
  * adapter can replace this class without changing module callers. */
 export class JobQueue {
-  private handlers = new Map<string, JobHandler>();
+  protected handlers = new Map<string, JobHandler>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
-  constructor(private store: Store, private pollMs = 1000) {}
+  constructor(protected readonly store: Store, private pollMs = 1000) {}
 
   register(type: string, handler: JobHandler): void {
     this.handlers.set(type, handler);
@@ -69,7 +69,7 @@ export class JobQueue {
       );
       let processed = 0;
       for (const job of due.sort((a, b) => String(a.runAt).localeCompare(String(b.runAt)))) {
-        await this.process(job);
+        await this.processStoreJob(job);
         processed++;
       }
       return processed;
@@ -78,7 +78,7 @@ export class JobQueue {
     }
   }
 
-  private async process(job: Record<string, unknown>): Promise<void> {
+  private async processStoreJob(job: Record<string, unknown>): Promise<void> {
     const ctx = job.ctx as Context | undefined;
     const jobId = String(job.id);
     const current = await this.store.get<Record<string, unknown>>('jobs', jobId, ctx);
@@ -147,7 +147,7 @@ export class JobQueue {
     this.timer.unref();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }

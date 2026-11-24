@@ -25,7 +25,11 @@
       "package.json"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signtoolOptions": {
+        "certificateFile": null,
+        "certificatePassword": null
+      }
     },
     "nsis": {
       "oneClick": false,
@@ -33,6 +37,7 @@
     },
     "mac": {
       "category": "public.app-category.business",
+      "hardenedRuntime": true,
       "target": [
         "dmg",
         "zip"

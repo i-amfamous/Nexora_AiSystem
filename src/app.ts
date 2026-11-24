@@ -6,7 +6,11 @@ import { FileStore, type Store } from './core/store.js';
 import { PostgresStore } from './core/postgres-store.js';
 import { EventHub } from './core/events.js';
 import { JobQueue } from './core/queue.js';
+import { RedisJobQueue } from './core/redis-queue.js';
 import { StorageService } from './core/storage.js';
+import { assertProductionConfig, runtimeConfig } from './core/config.js';
+import { logger } from './core/logger.js';
+import { startBackupScheduler } from './core/backup.js';
 import { resolveToken } from './core/auth.js';
 import { ApiError } from './core/errors.js';
 import { Router, type ApiRequest, type ApiResponse } from './api/router.js';
@@ -40,10 +44,12 @@ const MIME: Record<string, string> = {
 interface RateEntry { count: number; reset: number }
 
 export async function createApp(options: AppOptions = {}): Promise<NexoraApp> {
+  assertProductionConfig();
+  const config = runtimeConfig();
   let store: Store;
   if (options.store) {
     store = options.store;
-  } else if (process.env.DATA_STORE === 'postgres') {
+  } else if (config.dataStore === 'postgres') {
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required when DATA_STORE=postgres');
     store = new PostgresStore(process.env.DATABASE_URL);
   } else {
@@ -51,14 +57,18 @@ export async function createApp(options: AppOptions = {}): Promise<NexoraApp> {
   }
   await store.init();
   const events = new EventHub(store);
-  const queue = new JobQueue(store);
+  const queue = config.queueDriver === 'redis' && !options.store
+    ? new RedisJobQueue(store, String(process.env.REDIS_URL))
+    : new JobQueue(store);
   const storage = new StorageService(store);
   const router = new Router(store, events, queue, storage);
   const rateLimits = new Map<string, RateEntry>();
   const interfaceRoot = path.resolve(process.cwd(), 'interface');
+  const stopBackups = config.production && options.autoStartQueue !== false ? startBackupScheduler() : () => undefined;
 
   const server = http.createServer(async (req, res) => {
     const requestId = randomUUID();
+    const started = Date.now();
     try {
       if (process.env.REQUIRE_HTTPS === 'true' && req.headers['x-forwarded-proto'] !== 'https') {
         res.writeHead(301, { location: `https://${req.headers.host || 'localhost'}${req.url || '/'}` }).end();
@@ -102,7 +112,22 @@ export async function createApp(options: AppOptions = {}): Promise<NexoraApp> {
       };
       const response = await router.handle(apiRequest);
       send(res, response, requestId);
+      logger.info('http request', {
+        requestId,
+        method: apiRequest.method,
+        path: url.pathname,
+        status: response.status,
+        durationMs: Date.now() - started,
+        businessId: apiRequest.ctx?.businessId
+      });
     } catch (error) {
+      logger.error('http request failed', {
+        requestId,
+        method: req.method,
+        path: (req.url || '').split('?')[0],
+        durationMs: Date.now() - started,
+        message: error instanceof Error ? error.message : String(error)
+      });
       sendError(res, error, requestId);
     }
   });
@@ -117,7 +142,8 @@ export async function createApp(options: AppOptions = {}): Promise<NexoraApp> {
     events,
     queue,
     async close() {
-      queue.stop();
+      stopBackups();
+      await queue.stop();
       events.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await store.close();
@@ -231,7 +257,7 @@ function sendError(res: ServerResponse, error: unknown, requestId: string): void
     else if (message.startsWith('NOT_FOUND:')) { status = 404; code = 'NOT_FOUND'; }
     else if (message.startsWith('CONFLICT:')) { status = 409; code = 'CONFLICT'; message = message.slice(9); }
     else if (message.startsWith('UNKNOWN_TOOL:')) { status = 400; code = 'VALIDATION_ERROR'; }
-    else if (status === 500) console.error(`[Nexora ${requestId}]`, error);
+    else if (status === 500) logger.error('unhandled request error', { requestId, message: error.message, stack: error.stack });
   }
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',

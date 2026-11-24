@@ -5,6 +5,7 @@ import type { BaseRecord, CollectionName, Context } from './types.js';
 import type { Database, Store } from './store.js';
 import { buildSeed } from './seed.js';
 import { errors } from './errors.js';
+import { isProduction } from './config.js';
 
 const ALL_COLLECTIONS: CollectionName[] = [
   'businesses', 'users', 'employees', 'departments', 'roles', 'permissions', 'userRoles', 'rolePermissions',
@@ -266,7 +267,7 @@ export class PostgresStore implements Store {
 
   async init(): Promise<void> {
     const result = await this.query<{ count: number }>('SELECT count(*)::int AS count FROM public.businesses', [], undefined, true);
-    if (Number(result.rows[0]?.count || 0) > 0) return;
+    if (isProduction() || Number(result.rows[0]?.count || 0) > 0) return;
     await this.transaction(async () => {
       const seed = buildSeed();
       for (const collection of SEED_ORDER) {

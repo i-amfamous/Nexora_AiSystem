@@ -309,7 +309,7 @@
     var body;
     if (!tab) {
       body = '<div class="card"><table class="t"><thead><tr><th>Invoice</th><th>Customer</th><th>Order</th><th>Issued</th><th>Due</th><th class="num">Total</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead><tbody>' +
-        NX.invoices.map(function (v) { var bal = v.total - v.paid; return '<tr><td class="strong nowrap">' + v.id + '</td><td>' + esc(NX.customer(v.customer).name) + '</td><td class="small nowrap">' + (v.order ? '<a href="#/orders/o/' + v.order + '">' + v.order + '</a>' : '<span class="faint">None</span>') + '</td><td class="small muted nowrap">' + v.issued + '</td><td class="small nowrap ' + (v.status === 'Overdue' ? 'down' : 'muted') + '">' + v.due + '</td><td class="num">' + money(v.total) + '</td><td class="num strong">' + money(bal) + '</td><td>' + UI.status(v.status) + '</td>' +
+        NX.invoices.map(function (v) { var bal = v.total - v.paid; return '<tr><td class="strong nowrap"><a href="#/finance/invoices/' + v.id + '">' + v.id + '</a></td><td>' + esc(NX.customer(v.customer).name) + '</td><td class="small nowrap">' + (v.order ? '<a href="#/orders/o/' + v.order + '">' + v.order + '</a>' : '<span class="faint">None</span>') + '</td><td class="small muted nowrap">' + v.issued + '</td><td class="small nowrap ' + (v.status === 'Overdue' ? 'down' : 'muted') + '">' + v.due + '</td><td class="num">' + money(v.total) + '</td><td class="num strong">' + money(bal) + '</td><td>' + UI.status(v.status) + '</td>' +
           '<td class="nowrap">' + (bal > 0 ? '<button class="btn sm" data-act="record-pay" data-id="' + v.id + '">Record payment</button> <button class="btn ghost sm" data-act="remind" data-id="' + v.id + '">Remind</button>' : '') + '</td></tr>'; }).join('') +
         '</tbody></table></div>';
     } else if (tab === 'payments') {
@@ -337,6 +337,28 @@
         '<div class="kpi"><div class="kpi-label">Expenses this month</div><div class="kpi-value"><small>GH₵</small>' + money(exp, { dp: 0, bare: true }) + '</div><div class="kpi-delta">1 waiting for approval</div></div></section>' +
       tabBar('finance', [['', 'Invoices', NX.invoices.length], ['payments', 'Payments', NX.payments.length], ['expenses', 'Expenses', NX.expenses.length], ['summary', 'Summary']], tab) + body + '</div>';
   };
+  /* Deep links emitted by payment reminders land on a specific invoice. */
+  A.mounts.finance = function (c, r) { if (r.sub === 'invoices' && r.id) openInvoice(r.id); };
+  function openInvoice(id) {
+    var v = NX.byId(NX.invoices, id); if (!v) return;
+    var cust = NX.customer(v.customer), bal = v.total - v.paid;
+    var payments = NX.payments.filter(function (p) { return p.invoice === v.id; });
+    UI.drawer({ title: v.id,
+      head: '<div class="row" style="gap:8px"><h2>' + esc(v.id) + '</h2>' + UI.status(v.status) + '</div><div class="small muted mt-8">' + esc(cust.name) + '. Issued ' + esc(v.issued) + ', due ' + esc(v.due) + '</div>',
+      body: '<div class="card"><table class="t"><tbody>' +
+          '<tr><td class="muted">Customer</td><td class="strong">' + esc(cust.name) + '</td></tr>' +
+          (v.order ? '<tr><td class="muted">Order</td><td><a href="#/orders/o/' + v.order + '">' + v.order + '</a></td></tr>' : '') +
+          '<tr><td class="muted">Invoice total</td><td class="num strong">' + money(v.total) + '</td></tr>' +
+          '<tr><td class="muted">Recorded payments</td><td class="num">' + money(v.paid) + '</td></tr>' +
+          '<tr><td class="muted">Outstanding balance</td><td class="num strong">' + money(bal) + '</td></tr>' +
+        '</tbody></table></div>' +
+        '<h3 style="margin:20px 0 10px">Payments</h3>' +
+        (payments.length ? '<div class="card"><table class="t"><thead><tr><th>Payment</th><th>Method</th><th class="num">Amount</th><th>Verification</th></tr></thead><tbody>' +
+          payments.map(function (p) { return '<tr><td class="strong">' + esc(p.id) + '<div class="small faint">' + esc(p.when) + '</div></td><td>' + esc(p.method) + '</td><td class="num">' + money(p.amount) + '</td><td>' + (p.verified ? '<span class="badge good">Verified</span>' : '<span class="badge warn">Manual</span>') + '</td></tr>'; }).join('') +
+          '</tbody></table></div>' : UI.empty('No payments recorded', 'Payments against this invoice will appear here.')),
+      foot: (bal > 0 ? '<button class="btn" data-act="remind" data-id="' + v.id + '">Send reminder</button><button class="btn primary" data-act="record-pay" data-id="' + v.id + '">Record payment</button>' : '')
+    });
+  }
   A.actions['record-pay'] = function (el) {
     var v = NX.byId(NX.invoices, el.getAttribute('data-id')); var bal = v.total - v.paid;
     UI.modal({ title: 'Record payment for ' + v.id, ok: 'Record payment',

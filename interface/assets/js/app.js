@@ -1,6 +1,6 @@
 /* App shell: routing, navigation by role, command palette, notifications. */
 (function () {
-  var A = { views: {}, mounts: {}, actions: {}, state: {}, apiMode: true, permissions: [], identity: null };
+  var A = { views: {}, mounts: {}, actions: {}, state: {}, apiMode: true, permissions: [], identity: null, config: {} };
 
   A.personas = [
     { emp: 'e1', role: 'owner' },
@@ -76,8 +76,20 @@
 
   A.route = function () {
     var h = location.hash.replace(/^#\/?/, '');
+    var q = h.indexOf('?');
+    var queryText = q >= 0 ? h.slice(q + 1) : '';
+    if (q >= 0) h = h.slice(0, q);
     var parts = h.split('/');
-    return { page: parts[0] || 'overview', sub: parts[1] || '', id: parts[2] || '' };
+    var query = {};
+    queryText.split('&').forEach(function (pair) {
+      if (!pair) return;
+      var eq = pair.indexOf('=');
+      var key = eq >= 0 ? pair.slice(0, eq) : pair;
+      var value = eq >= 0 ? pair.slice(eq + 1) : '';
+      try { key = decodeURIComponent(key); value = decodeURIComponent(value); } catch (e) {}
+      query[key] = value;
+    });
+    return { page: parts[0] || 'overview', sub: parts[1] || '', id: parts[2] || '', query: query };
   };
   A.go = function (hash) { if (location.hash === hash) A.render(); else location.hash = hash; };
 
@@ -124,9 +136,9 @@
   };
 
   A.render = function () {
-    if (!A.signedIn) { A.views.auth(A.route()); return; }
-    if (!document.getElementById('nav')) A.renderShell();
     var r = A.route();
+    if (!A.signedIn || (r.page === 'auth' && r.sub === 'reset')) { A.views.auth(r); return; }
+    if (!document.getElementById('nav')) A.renderShell();
     if (r.page === 'auth') { location.hash = '#/overview'; return; }
     A.renderNav();
     var c = document.getElementById('content');
@@ -298,7 +310,15 @@
     try { t = localStorage.getItem('nx-theme') || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
     document.documentElement.setAttribute('data-theme', t);
     A.signedIn = false;
+    try { A.config = await NXApi.config(); } catch (error) { A.config = { demoMode: false }; }
     if (!location.hash) location.hash = '#/auth/login';
+    var initial = A.route();
+    if (initial.page === 'auth' && initial.sub === 'reset') {
+      NXApi.clearToken();
+      NXApi.stopRealtime();
+      A.render();
+      return;
+    }
     A.render();
     if (!NXApi.getToken()) return;
     try {
@@ -306,6 +326,16 @@
       A.applyIdentity(session.me, session.context, session.permissions);
       NXApi.applyBootstrap(session.bootstrap);
       A.signedIn = true;
+      var current = A.route();
+      if (current.page === 'auth' && current.sub === 'reset') {
+        NXApi.clearToken();
+        NXApi.stopRealtime();
+        A.signedIn = false;
+        A.identity = null;
+        A.permissions = [];
+        A.render();
+        return;
+      }
       if (/^#\/auth/.test(location.hash)) location.hash = '#/overview';
       A.renderShell(); A.render();
       NXApi.connectRealtime();

@@ -5,8 +5,9 @@ import { hashPassword, hashToken, randomToken, signToken, verifyPassword, verify
 import { recordAudit } from './audit.js';
 import { DEFAULT_ROLE_PERMISSIONS, PERMISSIONS } from './rbac.js';
 import { errors } from './errors.js';
-
-const SESSION_SECRET = process.env.SESSION_SECRET || 'nexora-development-secret';
+import { getSessionSecret, isProduction } from './config.js';
+import { sendMail } from './mailer.js';
+import { buildWorkspaceTemplate } from './seed.js';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const RESET_TTL_MS = 30 * 60 * 1000;
 
@@ -57,27 +58,19 @@ export async function createWorkspaceDefaults(store: Store, businessId: string, 
     await store.insert('permissions', { id: `perm_${permission}`, key: permission }, systemCtx);
   }
 
-  const templateBusiness = (await store.list<Record<string, unknown>>('businesses')).find((item) => item.id !== businessId);
-  const templateCtx = templateBusiness ? { ...systemCtx, businessId: String(templateBusiness.id) } : undefined;
-  const copyTemplate = async (collection: Parameters<Store['list']>[0], limit: number) => {
-    if (!templateCtx) return;
-    const records = await store.list<Record<string, unknown>>(collection, undefined, templateCtx);
-    for (const record of records.slice(0, limit)) {
-      const { id, businessId: _b, createdAt: _c, updatedAt: _u, ...rest } = record;
+  // Structural defaults are generated in code, never copied from another
+  // tenant. This keeps production workspaces free of demo customers, users,
+  // conversations, sessions and statistics.
+  const template = buildWorkspaceTemplate(businessId);
+  for (const collection of [
+    'departments', 'communicationChannels', 'integrations', 'channelConnections',
+    'agents', 'agentConfigurations', 'agentPermissions', 'metrics'
+  ] as Parameters<Store['list']>[0][]) {
+    for (const record of template[collection] || []) {
+      const { id, businessId: _b, createdAt: _c, updatedAt: _u, ...rest } = record as Record<string, unknown>;
       if (!id) continue;
       await store.insert(collection, { ...rest, id: String(id) }, systemCtx);
     }
-  };
-  await copyTemplate('agents', 6);
-  await copyTemplate('agentConfigurations', 6);
-  await copyTemplate('agentPermissions', 42);
-
-  const channels: [string, string, string][] = [
-    ['whatsapp', 'WhatsApp', '#1f8f4e'], ['email', 'Email', '#5b6470'], ['telegram', 'Telegram', '#2a7fc0'],
-    ['webchat', 'Website chat', '#1e5b45'], ['instagram', 'Instagram', '#b0407a'], ['messenger', 'Messenger', '#3b5bdb']
-  ];
-  for (const [id, name, color] of channels) {
-    await store.insert('communicationChannels', { id, name, short: name[0], color, status: 'available' }, systemCtx);
   }
 }
 
@@ -119,7 +112,7 @@ export async function registerBusiness(store: Store, input: Record<string, unkno
 async function issueSession(store: Store, user: Record<string, unknown>, ip: string, userAgent: string): Promise<AuthResult> {
   const sessionId = `s_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const expiresAt = Date.now() + SESSION_TTL_MS;
-  const token = signToken({ sid: sessionId, uid: String(user.id), bid: String(user.businessId), exp: expiresAt }, SESSION_SECRET);
+  const token = signToken({ sid: sessionId, uid: String(user.id), bid: String(user.businessId), exp: expiresAt }, getSessionSecret());
   await store.insert('sessions', {
     id: sessionId,
     userId: user.id,
@@ -146,7 +139,7 @@ export async function login(store: Store, email: string, password: string, ip: s
 }
 
 export async function resolveToken(store: Store, token: string, ip: string, userAgent: string): Promise<Context | null> {
-  const payload = verifyToken(token, SESSION_SECRET);
+  const payload = verifyToken(token, getSessionSecret());
   if (!payload || typeof payload.exp !== 'number' || payload.exp < Date.now()) return null;
   const session = await store.get<Record<string, unknown>>('sessions', String(payload.sid));
   if (!session || !session.active || session.tokenHash !== hashToken(token)) return null;
@@ -168,7 +161,17 @@ export async function requestPasswordReset(store: Store, email: string): Promise
     expiresAt: new Date(Date.now() + RESET_TTL_MS).toISOString(),
     used: false
   }, { businessId: String(user.businessId), employeeId: String(user.employeeId), role: String(user.role), userId: String(user.id), sessionId: '', ip: '', userAgent: '' } as Context);
-  if (process.env.NODE_ENV !== 'production') console.log(`[Nexora] Password reset token for ${email}: ${token}`);
+  if (isProduction()) {
+    const publicUrl = String(process.env.PUBLIC_URL || 'http://localhost:4000').replace(/\/$/, '');
+    const link = `${publicUrl}/#/auth/reset?token=${encodeURIComponent(token)}`;
+    await sendMail({
+      to: String(user.email),
+      subject: 'Reset your Nexora password',
+      text: `Use this link to reset your Nexora password. It expires in 30 minutes.\n\n${link}\n\nIf you did not request this, ignore this email.`,
+      html: `<p>Use this link to reset your Nexora password. It expires in 30 minutes.</p><p><a href="${link}">Reset password</a></p><p>If you did not request this, ignore this email.</p>`
+    });
+    return null;
+  }
   return token;
 }
 
@@ -256,7 +259,16 @@ export async function inviteEmployee(store: Store, ctx: Context, input: Record<s
   }, ctx);
   await store.insert('userRoles', { userId: `u_${employeeId}`, roleId: input.role || 'sales' }, ctx);
   await recordAudit(store, ctx, { actorId: ctx.employeeId, actorType: 'Employee', action: 'Invited employee', resource: employeeId, result: 'Success' });
-  return { ...employee, temporaryPassword: process.env.NODE_ENV === 'production' ? undefined : temporaryPassword };
+  if (isProduction()) {
+    const signIn = String(process.env.PUBLIC_URL || 'http://localhost:4000');
+    await sendMail({
+      to: String(input.email),
+      subject: 'You are invited to Nexora',
+      text: `Sign in at ${signIn} with ${String(input.email)} and this temporary password: ${temporaryPassword}\nChange it after your first sign-in.`,
+      html: `<p>You are invited to Nexora.</p><p>Sign in at <a href="${signIn}">${signIn}</a> with <b>${String(input.email)}</b> and this temporary password: <b>${temporaryPassword}</b>.</p><p>Change it after your first sign-in.</p>`
+    });
+  }
+  return { ...employee, temporaryPassword: isProduction() ? undefined : temporaryPassword };
 }
 
 /** Issue a fresh temporary password for an employee who has not activated their account. */
@@ -278,7 +290,16 @@ export async function resendInvite(store: Store, ctx: Context, employeeId: strin
     result: 'Success',
     meta: { email }
   });
-  return { id: employeeId, temporaryPassword: process.env.NODE_ENV === 'production' ? undefined : temporaryPassword };
+  if (isProduction()) {
+    const signIn = String(process.env.PUBLIC_URL || 'http://localhost:4000');
+    await sendMail({
+      to: email,
+      subject: 'Your Nexora invitation was refreshed',
+      text: `Sign in at ${signIn} with ${email} and this temporary password: ${temporaryPassword}\nChange it after signing in.`,
+      html: `<p>Your Nexora invitation was refreshed.</p><p>Sign in at <a href="${signIn}">${signIn}</a> with <b>${email}</b> and this temporary password: <b>${temporaryPassword}</b>.</p>`
+    });
+  }
+  return { id: employeeId, temporaryPassword: isProduction() ? undefined : temporaryPassword };
 }
 
 export async function deactivateEmployee(store: Store, ctx: Context, employeeId: string, active: boolean): Promise<void> {

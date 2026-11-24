@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BaseRecord, CollectionName, Context } from './types.js';
 import { buildSeed } from './seed.js';
+import { isProduction } from './config.js';
 
 export type Database = Record<string, BaseRecord[]>;
 
@@ -46,7 +47,9 @@ export class FileStore implements Store {
         // Corrupt dev store: rebuild from the seed.
       }
     }
-    this.db = buildSeed();
+    // Production never imports demo records. A registered workspace receives
+    // only structural defaults via buildWorkspaceTemplate.
+    this.db = isProduction() ? {} : buildSeed();
     await this.persist();
   }
 

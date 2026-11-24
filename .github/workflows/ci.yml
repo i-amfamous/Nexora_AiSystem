@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# Electron is only needed for the desktop packager; downloading its binary is
+# slow and unnecessary for typechecking, tests and the API smoke test.
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc)
+        run: npm run build
+
+      - name: Tests
+        run: npm test
+
+      - name: Generate OpenAPI document
+        run: npm run openapi
+
+      - name: Validate database schema
+        run: npm run migrate -- --check
+
+      - name: Check interface JavaScript syntax
+        run: |
+          set -euo pipefail
+          for file in interface/assets/js/*.js; do
+            node --check "$file"
+          done
+
+      - name: Check desktop JavaScript syntax
+        run: |
+          set -euo pipefail
+          node --check desktop/main.js
+          node --check desktop/preload.js
+
+      - name: Server smoke test (config, health, login, bootstrap, reset)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SMOKE_DIR="$(mktemp -d)"
+          LOG_FILE="$SMOKE_DIR/server.log"
+          SERVER_PID=''
+          export HOST=127.0.0.1
+          export PORT=4000
+          export DATA_FILE="$SMOKE_DIR/nexora-smoke.json"
+
+          cleanup() {
+            if [ -n "$SERVER_PID" ]; then
+              kill "$SERVER_PID" 2>/dev/null || true
+              wait "$SERVER_PID" 2>/dev/null || true
+            fi
+            rm -rf "$SMOKE_DIR"
+          }
+          trap cleanup EXIT
+
+          node dist/server.js > "$LOG_FILE" 2>&1 &
+          SERVER_PID=$!
+
+          ready=false
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error "http://127.0.0.1:$PORT/api/v1/health" > /dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo '::error::Server exited before becoming healthy'
+              cat "$LOG_FILE"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo '::error::Timed out waiting for /api/v1/health'
+            cat "$LOG_FILE"
+            exit 1
+          fi
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo '::error::Smoke-test server exited unexpectedly'
+            cat "$LOG_FILE"
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          const base = `http://127.0.0.1:${process.env.PORT}`;
+
+          async function request(path, { method = 'GET', token, body } = {}) {
+            const headers = { accept: 'application/json' };
+            if (token) headers.authorization = `Bearer ${token}`;
+            if (body) headers['content-type'] = 'application/json';
+            const response = await fetch(`${base}${path}`, {
+              method,
+              headers,
+              ...(body ? { body: JSON.stringify(body) } : {})
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+              throw new Error(`${method} ${path} returned ${response.status}: ${JSON.stringify(payload)}`);
+            }
+            return payload;
+          }
+
+          const health = await request('/api/v1/health');
+          if (health?.data?.status !== 'ok') {
+            throw new Error(`Unexpected health payload: ${JSON.stringify(health)}`);
+          }
+
+          const config = await request('/api/v1/config');
+          if (config?.data?.production !== false || config?.data?.demoMode !== true) {
+            throw new Error(`Unexpected public configuration: ${JSON.stringify(config)}`);
+          }
+
+          const login = await request('/api/v1/auth/login', {
+            method: 'POST',
+            body: { email: 'owner@example.test', password: 'redacted-password' }
+          });
+          const token = login?.data?.token;
+          if (typeof token !== 'string' || !token) {
+            throw new Error('Login did not return a session token');
+          }
+
+          const bootstrap = await request('/api/v1/bootstrap', { token });
+          if (!bootstrap?.data?.business?.id) {
+            throw new Error('Bootstrap did not return the demo business');
+          }
+
+          const reset = await request('/api/v1/auth/password-reset/request', {
+            method: 'POST',
+            body: { email: 'owner@example.test' }
+          });
+          if (typeof reset?.data?.token !== 'string' || !reset.data.token) {
+            throw new Error('Password reset request did not return a development token');
+          }
+          await request('/api/v1/auth/password-reset/confirm', {
+            method: 'POST',
+            body: { token: reset.data.token, password: 'redacted-password' }
+          });
+          const relogin = await request('/api/v1/auth/login', {
+            method: 'POST',
+            body: { email: 'owner@example.test', password: 'redacted-password' }
+          });
+          if (!relogin?.data?.token) {
+            throw new Error('Login with the reset password failed');
+          }
+
+          console.log('Smoke test passed: config, health, login, bootstrap and password reset.');
+          NODE

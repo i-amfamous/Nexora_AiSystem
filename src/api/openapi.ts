@@ -10,19 +10,29 @@ const okResponse = { description: 'Successful response', content: { 'application
 const errorResponse = { description: 'Error response', content: { 'application/json': { schema: { type: 'object', properties: { error: { type: 'object', properties: { code: { type: 'string' }, message: { type: 'string' }, details: {} } }, requestId: { type: 'string' } } } } } };
 const secured = [{ bearerAuth: [] }];
 
-function op(summary: string, options: { auth?: boolean; body?: boolean; permission?: string } = {}): Record<string, unknown> {
+function op(summary: string, options: { auth?: boolean; body?: boolean; permission?: string; params?: Record<string, unknown>[] } = {}): Record<string, unknown> {
   return {
     summary,
     tags: options.permission ? [options.permission.split(':')[0]] : ['system'],
     ...(options.auth === false ? {} : { security: secured }),
     ...(options.permission ? { description: `Requires ${options.permission}` } : {}),
+    ...(options.params?.length ? { parameters: options.params } : {}),
     ...(options.body ? { requestBody: jsonBody() } : {}),
     responses: { '200': okResponse, '400': errorResponse, '401': errorResponse, '403': errorResponse, '429': errorResponse }
   };
 }
 
+const listParams: Record<string, unknown>[] = [
+  { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 }, description: 'Page number' },
+  { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 }, description: 'Rows per page (alias: limit)' },
+  { name: 'sort', in: 'query', schema: { type: 'string' }, description: 'Field to sort by' },
+  { name: 'order', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'] }, description: 'Sort direction' },
+  { name: 'q', in: 'query', schema: { type: 'string' }, description: 'Free-text search across record fields' }
+];
+
 export function openApiDocument(): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {
+    '/api/v1/config': { get: op('Public runtime configuration and demo-mode status', { auth: false }) },
     '/api/v1/health': { get: op('Health check', { auth: false }) },
     '/api/v1/monitoring': { get: op('Operational metrics for API, jobs, integrations, AI and authentication events', { permission: 'analytics:read' }) },
     '/api/v1/meta/permissions': { get: op('List permissions and those granted to the current role') },
@@ -33,10 +43,11 @@ export function openApiDocument(): Record<string, unknown> {
     '/api/v1/auth/me': { get: op('Get current user, workspace context and permissions') },
     '/api/v1/auth/password-reset/request': { post: op('Request a password reset token', { auth: false, body: true }) },
     '/api/v1/auth/password-reset/confirm': { post: op('Confirm a password reset', { auth: false, body: true }) },
-    '/api/v1/auth/sessions': { get: op('List active sessions') },
-    '/api/v1/auth/sessions/{id}': { delete: op('Revoke a session') },
-    '/api/v1/auth/sessions/revoke-others': { post: op('Revoke all other sessions') },
-    '/api/v1/bootstrap': { get: op('Load all authorised workspace data for the web client') },
+    '/api/v1/auth/sessions': { get: op('List active sessions', { permission: 'auth:read' }) },
+    '/api/v1/auth/sessions/{id}': { delete: op('Revoke a session', { permission: 'auth:read' }) },
+    '/api/v1/auth/sessions/revoke-others': { post: op('Revoke all other sessions', { permission: 'auth:read' }) },
+    '/api/v1/bootstrap': { get: op('Load all authorised workspace data for the web client', { permission: 'business:read' }) },
+    '/api/v1/businesses': { get: op('List businesses visible to the current tenant', { permission: 'business:read' }) },
     '/api/v1/businesses/current': {
       get: op('Get the current business profile', { permission: 'business:read' }),
       patch: op('Update the current business profile', { permission: 'business:update', body: true })
@@ -91,7 +102,7 @@ export function openApiDocument(): Record<string, unknown> {
       put: op('Update notification preferences for the current business', { permission: 'notifications:update', body: true })
     },
     '/api/v1/notifications/read-all': { post: op('Mark all notifications as read', { permission: 'notifications:update' }) },
-    '/api/v1/analytics/{view}': { get: op('Get a dashboard view: overview, sales, inventory, finance, communications, people or automation', { permission: 'analytics:read' }) },
+    '/api/v1/analytics/{view}': { get: op('Get a dashboard view: overview, sales, inventory, finance, communications, people or automation', { permission: 'analytics:read', params: [{ name: 'view', in: 'path', required: true, schema: { type: 'string', enum: ['overview', 'sales', 'inventory', 'finance', 'communications', 'people', 'automation'] } }, { name: 'range', in: 'query', schema: { type: 'string', default: '30d' }, description: 'Reporting window, e.g. 7d, 30d, 90d' }] }) },
     '/api/v1/analytics/summary': { post: op('Generate a traceable AI summary of recorded figures', { permission: 'analytics:read', body: true }) },
     '/api/v1/analytics/export/{dataset}': { get: op('Export analytics as CSV', { permission: 'analytics:export' }) },
     '/api/v1/audit-logs/export': { get: op('Export audit logs', { permission: 'audit:export' }) },
@@ -110,7 +121,7 @@ export function openApiDocument(): Record<string, unknown> {
   for (const [resource, config] of Object.entries(RESOURCES)) {
     const base = `/api/v1/${resource}`;
     paths[base] ||= {};
-    paths[base].get = op(`List ${resource} with pagination, filtering and sorting`, { permission: config.read });
+    paths[base].get = op(`List ${resource} with pagination, filtering and sorting`, { permission: config.read, params: listParams });
     if (config.create) paths[base].post = op(`Create a ${config.label.toLowerCase()}`, { permission: config.create, body: true });
     paths[`${base}/{id}`] ||= {};
     paths[`${base}/{id}`].get = op(`Get a ${config.label.toLowerCase()}`, { permission: config.read });

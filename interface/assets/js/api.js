@@ -12,6 +12,7 @@
   var retries = 0;
   var refreshPromise = null;
   var refreshTimer = null;
+  var configPromise = null;
 
   function idempotencyKey() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -246,6 +247,17 @@
     }
   }
 
+  /** Cached public configuration. Demo affordances must never be inferred from
+   * the UI bundle; they are enabled only when the server reports demoMode. */
+  function config() {
+    if (!configPromise) {
+      configPromise = request('GET', '/config').catch(function () {
+        return { production: true, demoMode: false, registrationEnabled: true, requireHttps: true, version: '2.0.0' };
+      });
+    }
+    return configPromise;
+  }
+
   async function restoreSession() {
     var identity = await request('GET', '/auth/me');
     var bootstrap = await request('GET', '/bootstrap');
@@ -299,6 +311,7 @@
     idempotencyKey: idempotencyKey,
     login: login,
     register: register,
+    config: config,
     restoreSession: restoreSession,
     applyBootstrap: applyBootstrap,
     normalize: normalize,

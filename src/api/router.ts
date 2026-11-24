@@ -11,6 +11,7 @@ import type { JobQueue } from '../core/queue.js';
 import type { StorageService } from '../core/storage.js';
 import { AIOrchestrator } from '../core/ai/orchestrator.js';
 import { TOOL_NAMES } from '../core/ai/tools.js';
+import { runtimeConfig } from '../core/config.js';
 import { RESOURCES, createRecord, getRecord, listRecords, parseQuery, removeRecord, updateRecord } from '../modules/records.js';
 import { CommunicationModule } from '../modules/communication.js';
 import { SalesModule, InventoryModule, FinanceModule } from '../modules/commerce.js';
@@ -218,6 +219,16 @@ export class Router {
       return result;
     };
 
+    this.add('GET', `${p}/config`, async () => {
+      const config = runtimeConfig();
+      return ok({
+        production: config.production,
+        demoMode: config.demoMode,
+        registrationEnabled: true,
+        requireHttps: config.requireHttps,
+        version: '2.0.0'
+      });
+    }, { auth: false });
     this.add('GET', `${p}/health`, async () => ok({ status: 'ok', version: '2.0.0', time: new Date().toISOString() }), { auth: false });
     this.add('GET', `${p}/monitoring`, async (req) => ok(await this.modules.monitoring.snapshot(req.ctx!)), { permission: 'analytics:read' });
     this.add('GET', `${p}/meta/permissions`, async (req) => {

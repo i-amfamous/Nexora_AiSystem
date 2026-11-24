@@ -3,6 +3,7 @@ import type { Context } from './types.js';
 import type { Store } from './store.js';
 import { hmacHex } from './crypto.js';
 import { errors } from './errors.js';
+import { getWebhookSecret } from './config.js';
 
 export interface NormalizedInbound {
   channel: string;
@@ -29,7 +30,7 @@ function header(headers: Record<string, string | string[] | undefined>, name: st
 
 function secretFor(provider: string): string {
   const specific = process.env[`WEBHOOK_SECRET_${provider.toUpperCase()}`];
-  return specific || process.env.WEBHOOK_SECRET || '';
+  return specific || getWebhookSecret();
 }
 
 /** Verifies provider signatures and rejects replays. Secrets never travel in URLs. */

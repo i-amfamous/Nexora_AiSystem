@@ -37,11 +37,21 @@
         UI.field({ label: 'Email', name: 'email', type: 'email', required: true, err: 'Enter the email address on your account.' }) +
         '<button class="btn primary" type="submit" style="height:40px">Send reset link</button>' +
         '<p class="small muted" style="text-align:center"><a href="#/auth/login">Back to sign in</a></p></form>';
+    } else if (mode === 'reset') {
+      var resetToken = (r.query && r.query.token) || '';
+      form = '<form class="auth-form" id="auth-form" novalidate>' +
+        '<div><h2>Choose a new password</h2><p class="muted mt-8">' + (resetToken ? 'Enter a new password for your Nexora account.' : 'This link is missing its reset token. Request a new link from the sign-in page.') + '</p></div>' +
+        UI.field({ label: 'New password', name: 'password', type: 'password', required: true, hint: 'At least 10 characters.', err: 'Use at least 10 characters.' }) +
+        '<button class="btn primary" type="submit" style="height:40px"' + (resetToken ? '' : ' disabled') + '>Set new password</button>' +
+        '<p class="small muted" style="text-align:center"><a href="#/auth/login">Back to sign in</a></p></form>';
     } else {
+      var demoMode = !!(A.config && A.config.demoMode);
+      var demoEmail = demoMode ? 'owner@example.test' : '';
+      var demoPassword = demoMode ? 'redacted-password' : '';
       form = '<form class="auth-form" id="auth-form" novalidate>' +
         '<div><h2>Sign in to Nexora</h2><p class="muted mt-8">Use the account your business invited you with.</p></div>' +
-        UI.field({ label: 'Email', name: 'email', type: 'email', required: true, value: 'owner@example.test', err: 'Enter a valid email address.' }) +
-        '<div class="field"><div class="row between"><label for="pw">Password</label><a class="small" href="#/auth/forgot">Forgot password?</a></div><input id="pw" name="password" class="input" type="password" required value="redacted-password"><span class="err">Enter your password.</span></div>' +
+        UI.field({ label: 'Email', name: 'email', type: 'email', required: true, value: demoEmail, err: 'Enter a valid email address.' }) +
+        '<div class="field"><div class="row between"><label for="pw">Password</label><a class="small" href="#/auth/forgot">Forgot password?</a></div><input id="pw" name="password" class="input" type="password" required value="' + demoPassword + '"><span class="err">Enter your password.</span></div>' +
         '<label class="check small"><input type="checkbox" checked><span class="muted">Keep me signed in on this device</span></label>' +
         '<button class="btn primary" type="submit" style="height:40px">Sign in</button>' +
         '<p class="small muted" style="text-align:center">New to Nexora? <a href="#/auth/register">Register your business</a></p></form>';
@@ -53,7 +63,8 @@
       var terms = f.querySelector('#terms');
       var pw = f.querySelector('input[type=password]');
       var ok = UI.validate(f);
-      if (mode === 'register' && pw && pw.value.length < 10) { pw.closest('.field').classList.add('has-err'); ok = false; }
+      if ((mode === 'register' || mode === 'reset') && pw && pw.value.length < 10) { pw.closest('.field').classList.add('has-err'); ok = false; }
+      if (mode === 'reset' && !(A.route().query || {}).token) { UI.toast('That reset link is invalid or expired. Request a new one.'); return; }
       if (terms && !terms.checked) { ok = false; terms.parentNode.style.color = 'var(--bad)'; }
       if (!ok) return;
 
@@ -69,6 +80,19 @@
           await NXApi.request('POST', '/auth/password-reset/request', { email: value('email') });
           UI.toast('If that email has an account, a reset link is on its way.');
           location.hash = '#/auth/login';
+          return;
+        }
+
+        if (mode === 'reset') {
+          var token = (A.route().query || {}).token || '';
+          await NXApi.request('POST', '/auth/password-reset/confirm', { token: token, password: value('password') });
+          NXApi.clearToken();
+          NXApi.stopRealtime();
+          A.signedIn = false;
+          A.identity = null;
+          A.permissions = [];
+          location.hash = '#/auth/login';
+          UI.toast('Password updated. Please sign in again.');
           return;
         }
 

@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { getEncryptionKey, getSessionSecret } from './config.js';
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
@@ -40,10 +41,10 @@ export function randomToken(bytes = 24): string {
 }
 
 export function hashToken(token: string): string {
-  return createHmac('sha256', process.env.SESSION_SECRET || 'nexora-development-secret').update(token).digest('hex');
+  return createHmac('sha256', getSessionSecret()).update(token).digest('hex');
 }
 
-const secretKey = (): Buffer => createHash('sha256').update(process.env.INTEGRATION_ENCRYPTION_KEY || process.env.FILE_ENCRYPTION_KEY || 'nexora-development-integration-key').digest();
+const secretKey = (): Buffer => createHash('sha256').update(getEncryptionKey()).digest();
 
 export function encryptSecret(value: string): string {
   const iv = randomBytes(12);
