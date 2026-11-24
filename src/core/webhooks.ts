@@ -42,7 +42,7 @@ export async function verifyWebhook(
   ctx?: Context
 ): Promise<{ provider: string; eventId: string }> {
   const secret = secretFor(provider);
-  if (!secret) throw errors.internal(`Webhook secret is not configured for ${provider}`);
+  if (!secret) throw errors.unauthorized(`Webhook secret is not configured for ${provider}`);
 
   const signature = header(headers, 'x-nexora-signature') || header(headers, 'x-hub-signature-256') || header(headers, 'x-telegram-bot-api-token');
   const normalized = signature.replace(/^sha256=/i, '');

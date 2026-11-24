@@ -100,6 +100,7 @@
     var unread = NX.notifications.filter(function (n) { return n.unread; }).length;
     document.getElementById('root').innerHTML =
       '<div class="app">' +
+      '<button class="sidebar-backdrop" data-act="toggle-nav" aria-label="Close navigation"></button>' +
       '<aside class="sidebar" aria-label="Main navigation">' +
         '<div class="brand"><span class="brand-mark">N</span><span class="brand-name">NEXORA</span></div>' +
         '<button class="workspace-switch" data-act="workspace-menu" aria-label="Switch workspace"><span class="ws-logo">' + NX.business.short + '</span><span class="ws-meta"><span class="ws-name" style="display:block">' + UI.esc(NX.business.name) + '</span><span class="ws-sub">' + UI.esc(NX.business.plan) + ' plan</span></span>' + icon('chevronDown', 'i-s') + '</button>' +
@@ -108,6 +109,7 @@
       '</aside>' +
       '<div class="main">' +
         '<header class="topbar">' +
+          '<button class="icon-btn nav-toggle" data-act="toggle-nav" aria-label="Open navigation" aria-controls="nav" aria-expanded="false">' + icon('menu') + '</button>' +
           '<button class="search" data-act="palette" aria-label="Search or jump to">' + icon('search', 'i-s') + '<span>Search customers, orders, products</span><kbd>' + (navigator.platform.indexOf('Mac') > -1 ? '⌘' : 'Ctrl') + ' K</kbd></button>' +
           '<div class="topbar-spacer"></div>' +
           '<span class="sync-state" title="Connected to the Nexora server. Changes from other devices appear automatically."><i class="dot"></i><span>Live</span></span>' +
@@ -117,6 +119,28 @@
         '</header>' +
         '<main class="content" id="content" tabindex="-1"></main>' +
       '</div></div>';
+    document.getElementById('nav').addEventListener('click', function (e) {
+      if (!e.target.closest('a')) return;
+      var app = document.querySelector('.app');
+      var toggle = app && app.querySelector('.nav-toggle');
+      if (app) app.classList.remove('nav-open');
+      if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    });
+  };
+
+  A.actions['toggle-nav'] = function () {
+    var app = document.querySelector('.app');
+    if (!app) return;
+    var open = app.classList.toggle('nav-open');
+    var toggle = app.querySelector('.nav-toggle');
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    }
+    if (open) {
+      var activeLink = app.querySelector('.nav-item[aria-current="page"]') || app.querySelector('.nav-item');
+      if (activeLink) activeLink.focus();
+    } else if (toggle) toggle.focus();
   };
 
   A.renderNav = function () {
@@ -297,9 +321,10 @@
   document.addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && A.signedIn) { e.preventDefault(); A.actions.palette(); }
     if (e.key === 'Escape' && document.getElementById('overlay').innerHTML) UI.closeAll();
+    if (e.key === 'Escape' && document.querySelector('.app.nav-open')) A.actions['toggle-nav']();
     if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-act][tabindex]')) { var fn = A.actions[e.target.getAttribute('data-act')]; if (fn) { e.preventDefault(); fn(e.target, e); } }
   });
-  window.addEventListener('hashchange', function () { UI.closeAll(); A.render(); var c = document.getElementById('content'); if (c) c.scrollTop = 0; });
+  window.addEventListener('hashchange', function () { UI.closeAll(); var app = document.querySelector('.app'); if (app) { app.classList.remove('nav-open'); var toggle = app.querySelector('.nav-toggle'); if (toggle) toggle.setAttribute('aria-expanded', 'false'); } A.render(); var c = document.getElementById('content'); if (c) c.scrollTop = 0; });
   var rt;
   window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { UI.drawCharts(); }, 120); });
 

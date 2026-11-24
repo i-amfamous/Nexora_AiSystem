@@ -80,9 +80,14 @@ The demo workspace is seeded from `interface/assets/js/data.js` on first run onl
 npm test
 ```
 
-Runs `npm run build` then `node --test tests/*.test.js` — API/auth/RBAC/tenant isolation,
-durable queue behaviour, endpoint contracts, customer notes, CSV exports, file encryption,
-monitoring, and signed-webhook/realtime/AI-approval security tests.
+Runs `npm run build` then `node --test tests/*.test.js` (10 files, 17 tests) — API/auth/RBAC/
+tenant isolation, durable queue behaviour, endpoint contracts, customer notes, CSV exports,
+file encryption, monitoring, signed-webhook/realtime/AI-approval security, production fail-fast,
+and a whole-system sweep that checks exact router/OpenAPI parity with the checked-in spec,
+HTTP-calls every documented operation, exercises generic CRUD for every creatable resource,
+verifies every UI trigger/handler and `NXApi` export, and renders every route in jsdom.
+These are Node-level integration and DOM tests, not real-browser or live-service tests; PostgreSQL,
+Redis, SMTP, and signed desktop installers still need staging validation.
 
 ### Migrations
 

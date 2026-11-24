@@ -12,7 +12,10 @@ prefill are disabled. `db/schema.sql` (RLS, indexes, functions), `npm run migrat
 scheduled backups, structured JSON logs and a CI workflow exist. PostgreSQL, Redis and SMTP have
 not been exercised against live services in this environment, so validate them in staging. The
 Electron wrapper loads the backend-served UI via `PUBLIC_URL` and is unsigned unless signing
-credentials are supplied.
+credentials are supplied. Verification in this repository is automated at the Node/jsdom level
+(10 test files, 17 tests): exact router/OpenAPI parity, an HTTP sweep of every documented
+operation, CRUD for every creatable resource, UI trigger/handler and `NXApi` export parity, a
+jsdom render sweep of all routes, and production config fail-fast checks.
 
 ## Functional requirements (FR-01 .. FR-15)
 
@@ -57,7 +60,7 @@ credentials are supplied.
 | NFR-17 Web vulnerability protection | Partial | CSP, `nosniff`, frame/permissions policies, path-traversal guard and validation; no independent penetration test. |
 | NFR-18 Input validation | Implemented | Shared validation helpers, typed request bodies and JSON parse errors returned as 400. |
 | NFR-19 Rate limits | Partial | Per-IP in-process limits for auth, webhooks and general API; not shared across replicas. |
-| NFR-20 Webhook verification | Implemented | HMAC signatures, timestamp window and one-time nonce checks; production requires `WEBHOOK_SECRET`. |
+| NFR-20 Webhook verification | Implemented | HMAC signatures, timestamp window and one-time nonce checks; production requires `WEBHOOK_SECRET`, and a missing secret is rejected as `401 UNAUTHENTICATED` rather than a server error. |
 | NFR-21 More businesses/employees | Partial | Modular code, tenant model and required production PostgreSQL store support growth; no load test. |
 | NFR-22 More communication volume | Partial | Adapter registry exists; no provider load tests or throughput tuning. |
 | NFR-23 Modular backend | Implemented | Separate `core/`, `modules/` and `api/` boundaries in one deployable monolith. |
@@ -67,7 +70,7 @@ credentials are supplied.
 | NFR-27 Logic vs presentation | Implemented | Backend owns calculations/permissions; the UI renders API data and backend responses. |
 | NFR-28 Coding standards | Partial | Strict TypeScript and consistent layout; CI enforces typecheck/tests, but no lint/format configuration exists. |
 | NFR-29 API documentation | Implemented | `npm run openapi` generates an OpenAPI 3.1 document, including the public `/api/v1/config` endpoint, also served at `/openapi.json`. |
-| NFR-30 Automated critical tests | Partial | Node test files cover API/RBAC/tenant, endpoints, queue, notes, CSV, storage and security; CI runs build/tests/OpenAPI/migration/syntax/smoke checks, but no E2E or cross-platform browser automation. |
+| NFR-30 Automated critical tests | Partial | Ten Node test files / 17 tests cover API/RBAC/tenant, endpoints, queue, notes, CSV, storage, security, production fail-fast, exact API/UI inventory parity, an HTTP sweep of all 180 operations and jsdom rendering of every route; CI runs build/tests/OpenAPI/migration/syntax/smoke checks, but no real-browser, cross-platform or live-service automation. |
 | NFR-31 Understandable interface | Implemented | Plain-language business screens, clear states and role-aware navigation. |
 | NFR-32 Consistent navigation | Implemented | The same UI bundle is served to browsers and the Electron wrapper. |
 | NFR-33 Responsive screen sizes | Implemented | Responsive CSS down to narrow/tablet widths. |
@@ -92,7 +95,7 @@ credentials are supplied.
 | 10 User interface requirements | Implemented | Single responsive interface covers all SRS 10 screens, role-adaptive navigation and production-safe auth forms for web and desktop. |
 | 11 Security and governance | Partial | RBAC, AI tool boundaries, approvals, audit log, untrusted-content policy, fail-fast secrets and require-HTTPS exist; no external security review or immutable audit store. |
 | 12 Deployment and infrastructure | Partial | Production Dockerfile/compose with PostgreSQL and Redis, healthchecks, non-root runtime, scheduled backups, structured logs and a monitoring endpoint exist; alerting and live validation are not configured. |
-| 13 Testing requirements | Partial | Node tests plus CI typecheck/test/OpenAPI/migration/syntax/smoke checks; no E2E, browser or cross-platform test automation. |
+| 13 Testing requirements | Partial | Node/jsdom tests now sweep every documented API operation, creatable resource, UI trigger and route, plus CI typecheck/test/OpenAPI/migration/syntax/smoke checks; no real-browser, cross-platform or live-service test automation. |
 | 14 MVP and release strategy | Partial | Phases 1-6 capabilities and wrappers exist; installers are unsigned unless credentials are supplied and Phase 7 expansion is out of scope. |
 | 15 Acceptance criteria | Partial | Most functional criteria are demonstrable; live service validation, recovery drills, security sign-off and real cross-client update verification remain open. |
 
@@ -103,4 +106,4 @@ credentials are supplied.
 * No channel-provider credentials, SMS delivery, Sentry/OpenTelemetry SDK exporters or managed
   secret store are bundled.
 * No signed/notarised Electron installers without organisation credentials, and no auto-update mechanism.
-* No formal recovery drill, staging environment, measured SLOs, penetration test or E2E/cross-platform CI.
+* No formal recovery drill, staging environment, measured SLOs, penetration test or real-browser/E2E/cross-platform CI.
