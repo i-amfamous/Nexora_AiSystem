@@ -7,24 +7,25 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
   t.after(env.cleanup);
   const session = await login(env.base);
   const token = session.token;
+  const f = env.fixtures;
 
   /* Internal notes and drafts are tenant-scoped conversation state. */
-  const note = await api(env.base, '/conversations/v1/notes', {
+  const note = await api(env.base, `/conversations/${f.conversationId}/notes`, {
     method: 'POST', token, body: { text: 'Customer prefers a morning delivery slot.' }
   });
   assert.equal(note.status, 201);
-  assert.equal(note.body.data.conversationId, 'v1');
+  assert.equal(note.body.data.conversationId, f.conversationId);
   assert.equal(note.body.data.text, 'Customer prefers a morning delivery slot.');
   assert.equal(note.body.data.authorId, session.user.employeeId);
   assert.equal(note.body.data.businessId, session.businessId);
   assert.ok(note.body.data.id);
 
-  const draftSaved = await api(env.base, '/conversations/v1/drafts', {
+  const draftSaved = await api(env.base, `/conversations/${f.conversationId}/drafts`, {
     method: 'POST', token, body: { text: 'Draft reply for the owner to review.' }
   });
   assert.equal(draftSaved.status, 200);
   assert.equal(draftSaved.body.data.draft, 'Draft reply for the owner to review.');
-  const draftCleared = await api(env.base, '/conversations/v1/drafts', {
+  const draftCleared = await api(env.base, `/conversations/${f.conversationId}/drafts`, {
     method: 'POST', token, body: { text: null }
   });
   assert.equal(draftCleared.status, 200);
@@ -32,31 +33,31 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
 
   /* Customer merge moves references, merges tags and redacts the duplicate. */
   const sourceOrder = await api(env.base, '/orders', {
-    method: 'POST', token, body: { customer: 'c9', items: [['p1', 1]], channel: 'webchat' }
+    method: 'POST', token, body: { customer: f.duplicateCustomerId, items: [[f.productId, 1]], channel: 'webchat' }
   });
   assert.equal(sourceOrder.status, 201);
-  const merge = await api(env.base, '/customers/c1/merge', {
-    method: 'POST', token, body: { sourceId: 'c9' }, headers: { 'idempotency-key': 'merge-c9-into-c1' }
+  const merge = await api(env.base, `/customers/${f.customerId}/merge`, {
+    method: 'POST', token, body: { sourceId: f.duplicateCustomerId }, headers: { 'idempotency-key': `merge-${f.duplicateCustomerId}` }
   });
   assert.equal(merge.status, 200);
-  assert.equal(merge.body.data.mergedSourceId, 'c9');
+  assert.equal(merge.body.data.mergedSourceId, f.duplicateCustomerId);
   assert.ok(merge.body.data.reassigned.orders >= 1);
   assert.ok(merge.body.data.customer.tags.includes('Retail'));
   assert.equal(new Set(merge.body.data.customer.tags).size, merge.body.data.customer.tags.length);
   const movedOrder = await api(env.base, `/orders/${sourceOrder.body.data.id}`, { token });
-  assert.equal(movedOrder.body.data.customer, 'c1');
-  const redactedSource = await api(env.base, '/customers/c9', { token });
+  assert.equal(movedOrder.body.data.customer, f.customerId);
+  const redactedSource = await api(env.base, `/customers/${f.duplicateCustomerId}`, { token });
   assert.equal(redactedSource.body.data.status, 'deleted');
   assert.equal(redactedSource.body.data.name, '[redacted]');
   const allOrders = await api(env.base, '/orders?pageSize=200', { token });
-  const keptOrders = allOrders.body.data.data.filter((order) => order.customer === 'c1');
+  const keptOrders = allOrders.body.data.data.filter((order) => order.customer === f.customerId);
   assert.equal(merge.body.data.customer.orders, keptOrders.length);
   assert.equal(merge.body.data.customer.value, keptOrders.reduce((sum, order) => sum + Number(order.total || 0), 0));
   const mergeAudit = await api(env.base, '/audit-logs?q=Merged%20customer', { token });
-  assert.ok(mergeAudit.body.data.data.some((log) => log.meta?.sourceId === 'c9' && log.meta?.targetId === 'c1'));
+  assert.ok(mergeAudit.body.data.data.some((log) => log.meta?.sourceId === f.duplicateCustomerId && log.meta?.targetId === f.customerId));
 
   /* Invoice reminder goes through a channel adapter and leaves a delivery trail. */
-  const reminder = await api(env.base, '/invoices/INV-2610/reminder', {
+  const reminder = await api(env.base, `/invoices/${f.invoiceId}/reminder`, {
     method: 'POST', token, body: { channel: 'email', message: 'Kindly settle the outstanding invoice.' }
   });
   assert.equal(reminder.status, 202);
@@ -65,20 +66,21 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
   assert.equal(reminder.body.data.invoice.history.at(-1).action, 'Reminder sent via email');
   const bootstrap = await api(env.base, '/bootstrap', { token });
   const owner = bootstrap.body.data.employees.find((employee) => employee.role === 'owner');
-  const reminderNotification = bootstrap.body.data.notifications.find((item) => item.title === 'Invoice reminder sent for INV-2610');
+  const reminderNotification = bootstrap.body.data.notifications.find((item) => item.title === `Invoice reminder sent for ${f.invoiceId}`);
   assert.ok(reminderNotification);
   assert.equal(reminderNotification.recipientId, owner.id);
   assert.ok(bootstrap.body.data.conversationNotes.some((item) => item.id === note.body.data.id));
   assert.ok(bootstrap.body.data.workflowTriggers.length > 0);
 
   /* Invitations can be resent with a newly generated temporary password. */
+  const resendEmail = `resend.${Date.now()}@example.test`;
   const invited = await api(env.base, '/employees/invite', {
     method: 'POST', token,
-    body: { name: 'Resend Check', email: 'resend.check@example.test', role: 'sales' }
+    body: { name: 'Resend Check', email: resendEmail, role: 'sales' }
   });
   assert.equal(invited.status, 201);
   const resent = await api(env.base, `/employees/${invited.body.data.id}/invite/resend`, {
-    method: 'POST', token, body: { email: 'resend.check@example.test' }
+    method: 'POST', token, body: { email: resendEmail }
   });
   assert.equal(resent.status, 200);
   assert.equal(resent.body.data.id, invited.body.data.id);
@@ -90,9 +92,9 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
   /* Workflow trigger CRUD is available through the generic resource surface. */
   const triggers = await api(env.base, '/workflow-triggers', { token });
   assert.equal(triggers.status, 200);
-  assert.ok(triggers.body.data.data.some((item) => item.workflowId === 'w2'));
+  assert.ok(triggers.body.data.data.some((item) => item.workflowId === f.workflowId));
   const trigger = await api(env.base, '/workflow-triggers', {
-    method: 'POST', token, body: { workflowId: 'w2', trigger: 'manual.test', label: 'Manual dry run' }
+    method: 'POST', token, body: { workflowId: f.workflowId, trigger: 'manual.test', label: 'Manual dry run' }
   });
   assert.equal(trigger.status, 201);
   const triggerUpdate = await api(env.base, `/workflow-triggers/${trigger.body.data.id}`, {
@@ -109,7 +111,7 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
     actions: [{ type: 'notify', title: 'Preview only' }],
     payload: { channel: 'whatsapp' }
   };
-  const dryMatch = await api(env.base, '/workflows/w2/dry-run', { method: 'POST', token, body: dryRunBody });
+  const dryMatch = await api(env.base, `/workflows/${f.workflowId}/dry-run`, { method: 'POST', token, body: dryRunBody });
   assert.equal(dryMatch.status, 200);
   assert.equal(dryMatch.body.data.matched, true);
   assert.equal(dryMatch.body.data.wouldEnqueue, true);
@@ -117,7 +119,7 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
   assert.deepEqual(dryMatch.body.data.results[0], {
     field: 'channel', operator: 'equals', expected: 'whatsapp', actual: 'whatsapp', passed: true
   });
-  const dryMiss = await api(env.base, '/workflows/w2/dry-run', {
+  const dryMiss = await api(env.base, `/workflows/${f.workflowId}/dry-run`, {
     method: 'POST', token,
     body: { ...dryRunBody, conditions: [{ field: 'channel', operator: 'equals', value: 'email' }] }
   });
@@ -146,17 +148,18 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
   assert.equal(bootAfterPreferences.body.data.notificationPreferences.stock, false);
 
   /* Business profile accepts the tax identification number used by settings. */
+  const tin = `TIN-${Date.now()}`;
   const business = await api(env.base, '/businesses/current', {
-    method: 'PATCH', token, body: { tin: 'TIN-REDACTED', registrationNumber: 'RN-001' }
+    method: 'PATCH', token, body: { tin, registrationNumber: 'RN-001' }
   });
   assert.equal(business.status, 200);
-  assert.equal(business.body.data.tin, 'TIN-REDACTED');
+  assert.equal(business.body.data.tin, tin);
   assert.equal(business.body.data.registrationNumber, 'RN-001');
 
   /* Password change keeps the current session and revokes the other ones. */
   const otherSession = await login(env.base);
   const changed = await api(env.base, '/auth/password/change', {
-    method: 'POST', token, body: { currentPassword: 'redacted-password', newPassword: 'redacted-password' }
+    method: 'POST', token, body: { currentPassword: f.ownerPassword, newPassword: f.newPassword }
   });
   assert.equal(changed.status, 200);
   assert.equal(changed.body.data.message, 'Password updated');
@@ -165,12 +168,12 @@ test('SRS v2 endpoint surface: sessions, notes, merges, reminders and preference
   const otherRevoked = await api(env.base, '/auth/me', { token: otherSession.token });
   assert.equal(otherRevoked.status, 401);
   const oldPassword = await api(env.base, '/auth/login', {
-    method: 'POST', body: { email: 'owner@example.test', password: 'redacted-password' }
+    method: 'POST', body: { email: f.ownerEmail, password: f.ownerPassword }
   });
   assert.equal(oldPassword.status, 401);
-  const newSession = await login(env.base, 'owner@example.test', 'redacted-password');
+  const newSession = await login(env.base, f.ownerEmail, f.newPassword);
   const shortPassword = await api(env.base, '/auth/password/change', {
-    method: 'POST', token: newSession.token, body: { currentPassword: 'redacted-password', newPassword: 'short' }
+    method: 'POST', token: newSession.token, body: { currentPassword: f.newPassword, newPassword: 'short' }
   });
   assert.equal(shortPassword.status, 400);
 

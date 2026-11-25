@@ -1,8 +1,8 @@
 /** Central runtime configuration and production fail-fast checks.
  *
- * Development keeps the zero-setup demo defaults. Production refuses to start
- * unless the real backing services and secrets are configured, so a demo store
- * or placeholder secret can never silently reach a live environment.
+ * No demo workspace or credentials are shipped. Production refuses to start
+ * unless real backing services and secrets are configured, so a placeholder
+ * secret can never silently reach a live environment.
  */
 
 const PLACEHOLDERS = new Set([
@@ -93,7 +93,7 @@ export function runtimeConfig(): RuntimeConfig {
     dataStore: process.env.DATA_STORE === 'postgres' ? 'postgres' : 'file',
     queueDriver: process.env.QUEUE_DRIVER === 'redis' ? 'redis' : 'memory',
     requireHttps: process.env.REQUIRE_HTTPS === 'true',
-    demoMode: !production,
+    demoMode: false,
     publicUrl: String(process.env.PUBLIC_URL || 'http://localhost:4000'),
     apiBaseUrl: String(process.env.API_BASE_URL || 'http://localhost:4000'),
     smtpConfigured: Boolean(process.env.SMTP_URL),

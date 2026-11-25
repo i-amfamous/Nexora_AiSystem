@@ -3,6 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../dist/app.js';
+import { createWorkspaceDefaults } from '../dist/core/auth.js';
+import { createFixtures } from './fixtures.js';
+
+let activeFixtures = null;
+
+export function currentFixtures() {
+  return activeFixtures;
+}
 
 export async function startTestApp(options = {}) {
   process.env.NODE_ENV = 'test';
@@ -12,10 +20,25 @@ export async function startTestApp(options = {}) {
     dataFile: path.join(dir, 'data.json'),
     autoStartQueue: options.autoStartQueue === true
   });
+
+  const fixtures = createFixtures();
+  activeFixtures = fixtures;
+  await app.store.transaction(async () => {
+    await createWorkspaceDefaults(app.store, fixtures.businessId, fixtures.ownerEmployeeId);
+    for (const [collection, records] of Object.entries(fixtures.db)) {
+      // Structural metrics are created by createWorkspaceDefaults.
+      if (collection === 'metrics') continue;
+      for (const record of records) {
+        await app.store.insert(collection, record, { businessId: fixtures.businessId });
+      }
+    }
+  });
+
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const port = app.server.address().port;
   return {
     app,
+    fixtures,
     base: `http://127.0.0.1:${port}/api/v1`,
     wsBase: `ws://127.0.0.1:${port}/ws`,
     async cleanup() {
@@ -44,8 +67,12 @@ export async function api(base, endpoint, options = {}) {
   return { status: response.status, body: parsed, headers: response.headers, text };
 }
 
-export async function login(base, email = 'owner@example.test', password = 'redacted-password') {
-  const result = await api(base, '/auth/login', { method: 'POST', body: { email, password } });
+export async function login(base, email, password) {
+  const f = activeFixtures || createFixtures();
+  const result = await api(base, '/auth/login', {
+    method: 'POST',
+    body: { email: email || f.ownerEmail, password: password || f.ownerPassword }
+  });
   if (result.status !== 200) throw new Error(`Test login failed: ${result.text}`);
   return result.body.data;
 }

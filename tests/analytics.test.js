@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FileStore } from '../dist/core/store.js';
 import { AnalyticsModule } from '../dist/modules/analytics.js';
+import { createFixtures, insertFixtures } from './fixtures.js';
 
 test('CSV exports are generated from authoritative tenant records', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexora-analytics-'));
@@ -15,10 +16,12 @@ test('CSV exports are generated from authoritative tenant records', async (t) =>
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  const fixtures = createFixtures();
+  await insertFixtures(store, fixtures, ['customers', 'products']);
   const ctx = {
-    userId: 'u_e1',
-    employeeId: 'e1',
-    businessId: 'ws_REDACTED',
+    userId: fixtures.ownerUserId,
+    employeeId: fixtures.ownerEmployeeId,
+    businessId: fixtures.businessId,
     role: 'owner',
     sessionId: 's_test',
     ip: '127.0.0.1',
@@ -29,11 +32,11 @@ test('CSV exports are generated from authoritative tenant records', async (t) =>
   const customers = await analytics.exportDataset(ctx, 'customers');
   assert.equal(customers.filename, 'nexora-customers.csv');
   assert.match(customers.body, /^"Customer ID"/);
-  assert.ok(customers.body.split('\n').length > 1, 'expected seeded customer rows');
+  assert.ok(customers.body.split('\n').length > 1, 'expected generated customer rows');
 
   const inventory = await analytics.exportDataset(ctx, 'inventory');
   assert.match(inventory.body, /"SKU"/);
-  assert.ok(inventory.body.split('\n').length > 1, 'expected seeded product rows');
+  assert.ok(inventory.body.split('\n').length > 1, 'expected generated product rows');
 
   await assert.rejects(() => analytics.exportDataset(ctx, 'unknown'), /CSV dataset not found/);
 });

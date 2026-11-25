@@ -79,6 +79,7 @@ export async function registerBusiness(store: Store, input: Record<string, unkno
   const employeeId = `e_owner_${randomUUID().replace(/-/g, '').slice(0, 6)}`;
   const business = await store.insert('businesses', {
     id: businessId,
+    businessId,
     name: input.businessName,
     email: input.email,
     phone: input.phone,

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FileStore } from '../dist/core/store.js';
 import { StorageService } from '../dist/core/storage.js';
+import { createFixtures } from './fixtures.js';
 
 test('file attachments are encrypted at rest and scoped to the workspace', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexora-storage-'));
@@ -16,22 +17,23 @@ test('file attachments are encrypted at rest and scoped to the workspace', async
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  const fixtures = createFixtures();
   const ctx = {
-    userId: 'u_e1',
-    employeeId: 'e1',
-    businessId: 'ws_REDACTED',
+    userId: fixtures.ownerUserId,
+    employeeId: fixtures.ownerEmployeeId,
+    businessId: fixtures.businessId,
     role: 'owner',
     sessionId: 's_test',
     ip: '127.0.0.1',
     userAgent: 'test'
   };
   const storage = new StorageService(store, path.join(dir, 'files'));
-  const plaintext = 'confidential customer attachment: 0244001122';
+  const plaintext = `confidential customer attachment: ${fixtures.customerId}`;
   const stored = await storage.put(ctx, {
     name: 'note.txt',
     mimeType: 'text/plain',
     data: Buffer.from(plaintext, 'utf8'),
-    conversationId: 'v1'
+    conversationId: fixtures.conversationId
   });
 
   const onDisk = fs.readFileSync(String(stored.path));

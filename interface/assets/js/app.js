@@ -2,23 +2,16 @@
 (function () {
   var A = { views: {}, mounts: {}, actions: {}, state: {}, apiMode: true, permissions: [], identity: null, config: {} };
 
-  A.personas = [
-    { emp: 'e1', role: 'owner' },
-    { emp: 'e2', role: 'admin' },
-    { emp: 'e3', role: 'manager' },
-    { emp: 'e4', role: 'sales' },
-    { emp: 'e6', role: 'support' },
-    { emp: 'e8', role: 'inventory' },
-    { emp: 'e9', role: 'finance' }
-  ];
-  A.me = A.personas[0];
+  // Identity comes from the authenticated session; no demo persona is shipped.
+  A.personas = [];
+  A.me = { emp: '', role: '' };
 
   var ALL = ['owner', 'admin', 'manager', 'sales', 'support', 'inventory', 'finance'];
   A.nav = [
     { group: '', items: [
       { id: 'overview', label: 'Overview', icon: 'overview', roles: ALL },
-      { id: 'inbox', label: 'Inbox', icon: 'inbox', roles: ['owner', 'admin', 'manager', 'sales', 'support'], count: function () { return NX.conversations.filter(function (c) { return c.unread; }).length; } },
-      { id: 'tasks', label: 'Tasks', icon: 'tasks', roles: ALL, count: function () { return NX.tasks.filter(function (t) { return t.overdue; }).length; }, alert: true }
+      { id: 'inbox', label: 'Inbox', icon: 'inbox', roles: ['owner', 'admin', 'manager', 'sales', 'support'], count: function () { return (NX.conversations || []).filter(function (c) { return c.unread; }).length; } },
+      { id: 'tasks', label: 'Tasks', icon: 'tasks', roles: ALL, count: function () { return (NX.tasks || []).filter(function (t) { return t.overdue; }).length; }, alert: true }
     ] },
     { group: 'Business', items: [
       { id: 'customers', label: 'Customers', icon: 'customers', roles: ['owner', 'admin', 'manager', 'sales', 'support'] },
@@ -30,7 +23,7 @@
     { group: 'Team and automation', items: [
       { id: 'employees', label: 'Employees', icon: 'employees', roles: ['owner', 'admin', 'manager'] },
       { id: 'automation', label: 'Automation', icon: 'automation', roles: ['owner', 'admin', 'manager'] },
-      { id: 'agents', label: 'AI agents', icon: 'agents', roles: ['owner', 'admin', 'manager'], count: function () { return NX.approvals.filter(function (a) { return a.status === 'Pending'; }).length; } },
+      { id: 'agents', label: 'AI agents', icon: 'agents', roles: ['owner', 'admin', 'manager'], count: function () { return (NX.approvals || []).filter(function (a) { return a.status === 'Pending'; }).length; } },
       { id: 'analytics', label: 'Analytics', icon: 'analytics', roles: ['owner', 'admin', 'manager', 'finance'] }
     ] },
     { group: 'Workspace', items: [
@@ -95,15 +88,16 @@
 
   /* ---------- Shell ---------- */
   A.renderShell = function () {
-    var me = NX.employee(A.me.emp);
-    var role = NX.role(A.me.role);
-    var unread = NX.notifications.filter(function (n) { return n.unread; }).length;
+    var me = NX.employee(A.me.emp) || { name: (A.identity && A.identity.name) || 'User' };
+    var role = NX.role(A.me.role) || { name: A.me.role || 'Member' };
+    var business = NX.business || {};
+    var unread = (NX.notifications || []).filter(function (n) { return n.unread; }).length;
     document.getElementById('root').innerHTML =
       '<div class="app">' +
       '<button class="sidebar-backdrop" data-act="toggle-nav" aria-label="Close navigation"></button>' +
       '<aside class="sidebar" aria-label="Main navigation">' +
         '<div class="brand"><span class="brand-mark">N</span><span class="brand-name">NEXORA</span></div>' +
-        '<button class="workspace-switch" data-act="workspace-menu" aria-label="Switch workspace"><span class="ws-logo">' + NX.business.short + '</span><span class="ws-meta"><span class="ws-name" style="display:block">' + UI.esc(NX.business.name) + '</span><span class="ws-sub">' + UI.esc(NX.business.plan) + ' plan</span></span>' + icon('chevronDown', 'i-s') + '</button>' +
+        '<button class="workspace-switch" data-act="workspace-menu" aria-label="Switch workspace"><span class="ws-logo">' + UI.esc(business.short || '') + '</span><span class="ws-meta"><span class="ws-name" style="display:block">' + UI.esc(business.name || 'Workspace') + '</span><span class="ws-sub">' + UI.esc(business.plan || '') + ' plan</span></span>' + icon('chevronDown', 'i-s') + '</button>' +
         '<nav class="nav" id="nav"></nav>' +
         '<div class="sidebar-foot"><div class="me">' + UI.avatar(me.name) + '<div class="me-meta"><div class="me-name">' + UI.esc(me.name) + '</div><div class="me-role">' + UI.esc(role.name) + '</div></div><button class="icon-btn" data-act="user-menu" aria-label="Account menu">' + icon('more') + '</button></div></div>' +
       '</aside>' +
@@ -168,7 +162,8 @@
     var c = document.getElementById('content');
     UI.charts = {};
     if (!A.can(r.page)) {
-      c.innerHTML = '<div class="page">' + UI.empty('You do not have access to this area', 'Your role (' + NX.role(A.me.role).name + ') does not include this module. Ask a workspace administrator if you need access.', '<a class="btn" href="#/overview">Go to overview</a>') + '</div>';
+      var roleName = (NX.role(A.me.role) || { name: A.me.role || 'Member' }).name;
+      c.innerHTML = '<div class="page">' + UI.empty('You do not have access to this area', 'Your role (' + roleName + ') does not include this module. Ask a workspace administrator if you need access.', '<a class="btn" href="#/overview">Go to overview</a>') + '</div>';
       return;
     }
     var view = A.views[r.page] || A.views.overview;
@@ -206,8 +201,7 @@
   A.actions['workspace-menu'] = function (el) {
     UI.menu(el, [
       { header: true, label: 'Workspaces' },
-      { label: NX.business.name, icon: 'building', checked: true },
-      { label: 'Adom Kumasi Branch', icon: 'building', fn: function () { UI.toast('Each workspace keeps its records separate. Switching is done by the server after checking your membership.'); } },
+      { label: (NX.business && NX.business.name) || 'Workspace', icon: 'building', checked: true },
       'sep',
       { label: 'Business profile', icon: 'settings', fn: function () { A.go('#/settings'); } },
       { label: 'Register a new business', icon: 'plus', fn: function () { NXApi.clearToken(); NXApi.stopRealtime(); A.signedIn = false; location.hash = '#/auth/register'; A.render(); } }
@@ -269,10 +263,11 @@
       items = [];
       A.nav.forEach(function (g) { g.items.forEach(function (it) { if (A.can(it.id) && (!q || it.label.toLowerCase().indexOf(q) > -1)) items.push({ g: 'Go to', label: it.label, icon: it.icon, go: '#/' + it.id }); }); });
       if (q) {
-        if (A.can('customers')) NX.customers.forEach(function (c) { if ((c.name + ' ' + c.company + ' ' + c.phone).toLowerCase().indexOf(q) > -1) items.push({ g: 'Customers', label: c.name + (c.company ? ', ' + c.company : ''), icon: 'user', go: '#/customers/c/' + c.id, k: c.city }); });
-        if (A.can('orders')) NX.orders.forEach(function (o) { if ((o.id + ' ' + NX.customer(o.customer).name).toLowerCase().indexOf(q) > -1) items.push({ g: 'Orders', label: o.id + ', ' + NX.customer(o.customer).name, icon: 'orders', go: '#/orders/o/' + o.id, k: o.status }); });
-        if (A.can('inventory')) NX.products.forEach(function (p) { if ((p.name + ' ' + p.sku).toLowerCase().indexOf(q) > -1) items.push({ g: 'Products', label: p.name, icon: 'inventory', go: '#/inventory/p/' + p.id, k: p.stock + ' in stock' }); });
-        if (A.can('finance')) NX.invoices.forEach(function (v) { if ((v.id + ' ' + NX.customer(v.customer).name).toLowerCase().indexOf(q) > -1) items.push({ g: 'Invoices', label: v.id + ', ' + NX.customer(v.customer).name, icon: 'invoice', go: '#/finance', k: v.status }); });
+        var cname = function (id) { var c = NX.customer(id); return c && c.name ? c.name : 'Customer'; };
+        if (A.can('customers')) (NX.customers || []).forEach(function (c) { if ((c.name + ' ' + (c.company || '') + ' ' + (c.phone || '')).toLowerCase().indexOf(q) > -1) items.push({ g: 'Customers', label: c.name + (c.company ? ', ' + c.company : ''), icon: 'user', go: '#/customers/c/' + c.id, k: c.city }); });
+        if (A.can('orders')) (NX.orders || []).forEach(function (o) { if ((o.id + ' ' + cname(o.customer)).toLowerCase().indexOf(q) > -1) items.push({ g: 'Orders', label: o.id + ', ' + cname(o.customer), icon: 'orders', go: '#/orders/o/' + o.id, k: o.status }); });
+        if (A.can('inventory')) (NX.products || []).forEach(function (p) { if ((p.name + ' ' + (p.sku || '')).toLowerCase().indexOf(q) > -1) items.push({ g: 'Products', label: p.name, icon: 'inventory', go: '#/inventory/p/' + p.id, k: p.stock + ' in stock' }); });
+        if (A.can('finance')) (NX.invoices || []).forEach(function (v) { if ((v.id + ' ' + cname(v.customer)).toLowerCase().indexOf(q) > -1) items.push({ g: 'Invoices', label: v.id + ', ' + cname(v.customer), icon: 'invoice', go: '#/finance', k: v.status }); });
       }
       items = items.slice(0, 14);
       sel = Math.min(sel, Math.max(0, items.length - 1));

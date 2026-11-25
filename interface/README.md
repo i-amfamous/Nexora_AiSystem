@@ -1,13 +1,13 @@
 # Nexora interface
 
-The user interface for Nexora, the unified business operating platform described in `NEXORA.docx` (SRS v2.0). It covers every screen in SRS section 10 and the functional areas behind them, with realistic sample data for a Ghanaian business (Example Workspace Ltd, GHS, Africa/Accra).
+The user interface for Nexora, the unified business operating platform described in `NEXORA.docx` (SRS v2.0). It covers every screen in SRS section 10 and the functional areas behind them. The client ships with an empty data shell; all workspace records come from the authenticated backend.
 
 ## Run it
 
-Open `index.html` in any modern browser. Nothing to install or build.
+Run the API (`npm start` from the repository root) and open the served client; the static files need no build step.
 
-- Sign in with the prefilled details, or go to `index.html#/overview` directly.
-- Use the account menu (bottom left, the three dots) to preview the navigation as each role: owner, administrator, department manager, sales, support, inventory and finance.
+- Register the first workspace, then sign in with the credentials you created.
+- Navigation adapts to the signed-in role: owner, administrator, department manager, sales, support, inventory and finance.
 - Press `Ctrl K` (or `Cmd K` on a Mac) to search customers, orders, products and invoices, or to jump to any page.
 - Use the moon icon in the top bar to switch between light and dark themes.
 
@@ -50,7 +50,7 @@ The SRS specifies Next.js, Tailwind CSS and Electron (7.2, 5.4). This prototype 
 
 - `assets/css/nexora.css` tokens become the Tailwind theme (`colors`, `borderRadius`, `fontFamily`).
 - Each `A.views.*` function in `assets/js/views-*.js` becomes a Next.js route; `ui.js` helpers become shared components (Modal, Drawer, Menu, Toast, Field, Chart).
-- `assets/js/data.js` mirrors the entities in SRS 8.2 and the resource groups in 9.2, so each list can be swapped for a call to `/api/v1/...`.
+- `assets/js/data.js` defines the empty client shell for the entity groups in SRS 8.2/9.2; `NXApi.applyBootstrap` fills it in place from `/api/v1/...` without replacing `window.NX`.
 - The same pages load inside Electron for the Windows and macOS apps.
 
 ## Files
@@ -60,7 +60,7 @@ interface/
   index.html
   assets/css/nexora.css        design tokens and components
   assets/js/icons.js           line icon set
-  assets/js/data.js            sample workspace data
+  assets/js/data.js            empty client shell (bootstrap-populated)
   assets/js/ui.js              formatting, dialogs, drawers, menus, toasts, charts
   assets/js/app.js             shell, routing, roles, search, notifications
   assets/js/views-core.js      sign in, overview, inbox, customers

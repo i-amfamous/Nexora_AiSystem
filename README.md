@@ -33,8 +33,17 @@ npm run build
 npm start
 ```
 
-Open <http://localhost:4000>. With no `NODE_ENV`, the server runs in development with zero setup.
+Open <http://localhost:4000>. With no `NODE_ENV`, the server runs locally and starts with an empty
+workspace — register your first business and owner account from the sign-in screen.
 `npm run dev` runs TypeScript in watch mode; rebuild and restart to pick up changes.
+
+### Configuration
+
+All runtime settings and secrets are read from environment variables. The server and CLI scripts
+automatically load `.env` from the repository root (or the file named by `ENV_FILE`) without
+overriding values already set in the shell. `.env` and `.env.*` are gitignored; only `.env.example`
+is tracked. Generate secrets locally with `openssl rand -base64 48`, and never commit them.
+Set `NEXORA_SKIP_DOTENV=1` to disable file loading (used by the automated tests).
 
 ### Production
 
@@ -59,13 +68,13 @@ workspaces receive structural defaults (roles, departments, channels, agents, in
 no demo customers, users, conversations or statistics. The public `/api/v1/config` endpoint reports
 `demoMode:false`, and the web login form does not prefill demo credentials.
 
-### Development-only demo credentials
+### Registering the first workspace
 
-`owner@example.test` / `redacted-password`
-
-The demo workspace is seeded from `interface/assets/js/data.js` on first run only when
-`NODE_ENV !== 'production'`. `SEED_PASSWORD` applies only when the data file is created; delete
-`.data/nexora.json` to re-seed. Reset tokens are returned/printed locally instead of emailed.
+No account, customer or credential is preloaded. Register the owner from the sign-in page or with
+`POST /api/v1/auth/register`; the server creates the workspace with structural defaults only.
+The client starts with an empty `window.NX` shell and receives all records from the authorised
+`/api/v1/bootstrap` endpoint. Password resets are returned/printed locally instead of emailed in
+development.
 
 ### API documentation
 

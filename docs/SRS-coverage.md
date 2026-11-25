@@ -5,10 +5,11 @@ Companion to the 19-row summary in `README.md`. Statuses are deliberately conser
 substitute exists but a production requirement is not fully met, **Planned** = no implementation yet.
 
 Runtime truth for this release: development (`NODE_ENV !== 'production'`) uses `DATA_STORE=file`
-with `FileStore`, an in-process store-persisted queue and a seeded demo workspace. Production is
-fail-fast and requires `DATA_STORE=postgres` with `DATABASE_URL`, `QUEUE_DRIVER=redis` with
-`REDIS_URL`, SMTP, real secrets, `PUBLIC_URL` and `CORS_ORIGIN`; demo seeding and demo credential
-prefill are disabled. `db/schema.sql` (RLS, indexes, functions), `npm run migrate`, BullMQ workers,
+with `FileStore` and an in-process store-persisted queue. The local store starts empty and the
+first workspace is created through registration; no demo credentials or business records are
+shipped. Production is fail-fast and requires `DATA_STORE=postgres` with `DATABASE_URL`,
+`QUEUE_DRIVER=redis` with `REDIS_URL`, SMTP, real secrets, `PUBLIC_URL` and `CORS_ORIGIN`;
+`demoMode` is always false. `db/schema.sql` (RLS, indexes, functions), `npm run migrate`, BullMQ workers,
 scheduled backups, structured JSON logs and a CI workflow exist. PostgreSQL, Redis and SMTP have
 not been exercised against live services in this environment, so validate them in staging. The
 Electron wrapper loads the backend-served UI via `PUBLIC_URL` and is unsigned unless signing

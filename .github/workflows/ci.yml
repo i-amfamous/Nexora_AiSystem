@@ -102,6 +102,8 @@ jobs:
           fi
 
           node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto';
+
           const base = `http://127.0.0.1:${process.env.PORT}`;
 
           async function request(path, { method = 'GET', token, body } = {}) {
@@ -126,13 +128,34 @@ jobs:
           }
 
           const config = await request('/api/v1/config');
-          if (config?.data?.production !== false || config?.data?.demoMode !== true) {
+          if (config?.data?.production !== false || config?.data?.demoMode !== false) {
             throw new Error(`Unexpected public configuration: ${JSON.stringify(config)}`);
+          }
+
+          const suffix = randomBytes(4).toString('hex');
+          const email = `smoke.${suffix}@example.test`;
+          const password = `Smoke${suffix}Aa1!`;
+          const nextPassword = `Next${suffix}Bb2!`;
+
+          const registered = await request('/api/v1/auth/register', {
+            method: 'POST',
+            body: {
+              businessName: `Smoke Workspace ${suffix}`,
+              name: 'Smoke Owner',
+              email,
+              phone: '+233 30 000 0000',
+              password,
+              currency: 'GHS',
+              timezone: 'Africa/Accra'
+            }
+          });
+          if (typeof registered?.data?.token !== 'string' || !registered.data.token) {
+            throw new Error('Registration did not return a session token');
           }
 
           const login = await request('/api/v1/auth/login', {
             method: 'POST',
-            body: { email: 'owner@example.test', password: 'redacted-password' }
+            body: { email, password }
           });
           const token = login?.data?.token;
           if (typeof token !== 'string' || !token) {
@@ -141,27 +164,27 @@ jobs:
 
           const bootstrap = await request('/api/v1/bootstrap', { token });
           if (!bootstrap?.data?.business?.id) {
-            throw new Error('Bootstrap did not return the demo business');
+            throw new Error('Bootstrap did not return the registered workspace');
           }
 
           const reset = await request('/api/v1/auth/password-reset/request', {
             method: 'POST',
-            body: { email: 'owner@example.test' }
+            body: { email }
           });
           if (typeof reset?.data?.token !== 'string' || !reset.data.token) {
             throw new Error('Password reset request did not return a development token');
           }
           await request('/api/v1/auth/password-reset/confirm', {
             method: 'POST',
-            body: { token: reset.data.token, password: 'redacted-password' }
+            body: { token: reset.data.token, password: nextPassword }
           });
           const relogin = await request('/api/v1/auth/login', {
             method: 'POST',
-            body: { email: 'owner@example.test', password: 'redacted-password' }
+            body: { email, password: nextPassword }
           });
           if (!relogin?.data?.token) {
             throw new Error('Login with the reset password failed');
           }
 
-          console.log('Smoke test passed: config, health, login, bootstrap and password reset.');
+          console.log('Smoke test passed: config, health, registration, login, bootstrap and password reset.');
           NODE

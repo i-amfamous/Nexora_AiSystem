@@ -7,10 +7,11 @@ test('background jobs execute workflows with durable status', async (t) => {
   t.after(env.cleanup);
 
   const session = await login(env.base);
-  const queued = await api(env.base, '/workflows/w2/test', {
+  const f = env.fixtures;
+  const queued = await api(env.base, `/workflows/${f.workflowId}/test`, {
     method: 'POST',
     token: session.token,
-    body: { payload: { conversationId: 'v1', channel: 'WhatsApp', category: 'Order enquiry' } }
+    body: { payload: { conversationId: f.conversationId, channel: 'WhatsApp', category: 'Order enquiry' } }
   });
   assert.equal(queued.status, 202);
   assert.equal(queued.body.data.status, 'queued');
@@ -25,7 +26,7 @@ test('background jobs execute workflows with durable status', async (t) => {
   const job = jobsAfter.body.data.data.find((item) => item.id === queued.body.data.id);
   assert.equal(job.status, 'succeeded');
 
-  const executions = await api(env.base, '/workflow-executions?workflowId=w2', { token: session.token });
+  const executions = await api(env.base, `/workflow-executions?workflowId=${f.workflowId}`, { token: session.token });
   const execution = executions.body.data.data.find((item) => item.jobId === queued.body.data.id);
   assert.ok(execution);
   assert.equal(execution.result, 'Success');

@@ -7,16 +7,17 @@ test('internal customer notes, monitoring and authoritative CSV export', async (
   t.after(env.cleanup);
 
   const session = await login(env.base);
-  const created = await api(env.base, '/customers/c1/notes', {
+  const f = env.fixtures;
+  const created = await api(env.base, `/customers/${f.customerId}/notes`, {
     method: 'POST',
     token: session.token,
     body: { text: 'Gate code is on the side entrance.' }
   });
   assert.equal(created.status, 201);
-  assert.equal(created.body.data.customerId, 'c1');
+  assert.equal(created.body.data.customerId, f.customerId);
   assert.equal(created.body.data.visibility, 'internal');
 
-  const listed = await api(env.base, '/customers/c1/notes', { token: session.token });
+  const listed = await api(env.base, `/customers/${f.customerId}/notes`, { token: session.token });
   assert.equal(listed.status, 200);
   assert.ok(listed.body.data.some((note) => note.id === created.body.data.id));
 
@@ -25,12 +26,12 @@ test('internal customer notes, monitoring and authoritative CSV export', async (
     body: {
       businessName: 'Notes Other Workspace',
       name: 'Another Owner',
-      email: 'notes.other@workspace.test',
+      email: `notes.${Date.now()}@example.test`,
       phone: '+233 30 000 0001',
-      password: 'redacted-password'
+      password: f.newPassword
     }
   });
-  const crossTenant = await api(env.base, '/customers/c1/notes', { token: other.body.data.token });
+  const crossTenant = await api(env.base, `/customers/${f.customerId}/notes`, { token: other.body.data.token });
   assert.equal(crossTenant.status, 404);
 
   const monitoring = await api(env.base, '/monitoring', { token: session.token });

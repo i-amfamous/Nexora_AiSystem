@@ -32,7 +32,7 @@ const listParams: Record<string, unknown>[] = [
 
 export function openApiDocument(): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {
-    '/api/v1/config': { get: op('Public runtime configuration and demo-mode status', { auth: false }) },
+    '/api/v1/config': { get: op('Public runtime configuration including production and demoMode flags', { auth: false }) },
     '/api/v1/health': { get: op('Health check', { auth: false }) },
     '/api/v1/monitoring': { get: op('Operational metrics for API, jobs, integrations, AI and authentication events', { permission: 'analytics:read' }) },
     '/api/v1/meta/permissions': { get: op('List permissions and those granted to the current role') },

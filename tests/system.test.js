@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { startTestApp, api, login } from './helpers.js';
 import { RESOURCES } from '../dist/modules/records.js';
 import { PERMISSIONS } from '../dist/core/rbac.js';
+import { createFixtures, nxPayload } from './fixtures.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const spec = JSON.parse(fs.readFileSync(path.join(root, 'docs/openapi.json'), 'utf8'));
@@ -58,34 +59,36 @@ function concretePath(template, data = {}, sessionId = '', method = 'GET') {
   return template.replace(/\{([^}]+)\}/g, (_match, name) => values[name] || 'test-param');
 }
 
-const BODIES = {
-  'POST /api/v1/auth/login': { email: 'owner@example.test', password: 'redacted-password' },
-  'POST /api/v1/auth/register': { businessName: 'System Sweep', name: 'System Sweep Owner', email: `sweep-${Date.now()}@example.test`, password: 'redacted-password' },
-  'POST /api/v1/auth/password-reset/request': { email: 'owner@example.test' },
-  'POST /api/v1/auth/password-reset/confirm': { token: 'not-a-real-token', password: 'redacted-password' },
-  'POST /api/v1/auth/password/change': { currentPassword: 'incorrect', newPassword: 'redacted-password' },
-  'POST /api/v1/data/delete': { collection: 'customers', id: 'test-id', confirmation: 'DELETE' },
-  'POST /api/v1/agents/{id}/run': { prompt: 'Summarise the workspace' },
-  'POST /api/v1/workflows/schedule': { workflowId: 'test-id', runAt: new Date(Date.now() + 60_000).toISOString() },
-  'POST /api/v1/approvals/{id}/decide': { decision: 'approve', note: 'System sweep' },
-  'POST /api/v1/integrations/{id}/connect': { credentials: { token: 'test-token' } },
-  'POST /api/v1/files': { name: 'sweep.txt', mimeType: 'text/plain', dataBase64: 'c3dlZXA=' },
-  'POST /api/v1/conversations/{id}/reply': { text: 'System sweep reply' },
-  'POST /api/v1/conversations/{id}/notes': { text: 'System sweep note' },
-  'POST /api/v1/conversations/{id}/drafts': { text: 'System sweep draft' },
-  'POST /api/v1/channels/{channel}/message': { to: '+233000000000', text: 'System sweep message' },
-  'POST /api/v1/customers/{id}/notes': { text: 'System sweep note' },
-  'POST /api/v1/invoices/{id}/reminder': { message: 'System sweep reminder', channel: 'email' },
-  'POST /api/v1/payments/{id}/verify': { provider: 'paystack' },
-  'POST /api/v1/products/{id}/adjust': { delta: 1, reason: 'System sweep' },
-  'POST /api/v1/workflows/{id}/dry-run': { conditions: [], actions: [], payload: {} },
-  'POST /api/v1/workflows/{id}/test': { payload: {} },
-  'POST /api/v1/agents/{id}/configure': { automationLevel: 'suggest', dailyLimit: 5 },
-  'PUT /api/v1/agents/{id}/tools/{tool}': { enabled: false },
-  'PUT /api/v1/notifications/preferences': { preferences: { inApp: true } },
-  'PUT /api/v1/roles/{id}/permissions': { permissions: { 'customers:read': true } },
-  'POST /api/v1/analytics/summary': { range: '7d' }
-};
+function bodies(f) {
+  return {
+    'POST /api/v1/auth/login': { email: f.ownerEmail, password: f.ownerPassword },
+    'POST /api/v1/auth/register': { businessName: 'System Sweep', name: 'System Sweep Owner', email: `sweep-${Date.now()}@example.test`, password: f.newPassword },
+    'POST /api/v1/auth/password-reset/request': { email: f.ownerEmail },
+    'POST /api/v1/auth/password-reset/confirm': { token: 'not-a-real-token', password: f.newPassword },
+    'POST /api/v1/auth/password/change': { currentPassword: 'incorrect', newPassword: f.newPassword },
+    'POST /api/v1/data/delete': { collection: 'customers', id: 'test-id', confirmation: 'DELETE' },
+    'POST /api/v1/agents/{id}/run': { prompt: 'Summarise the workspace' },
+    'POST /api/v1/workflows/schedule': { workflowId: 'test-id', runAt: new Date(Date.now() + 60_000).toISOString() },
+    'POST /api/v1/approvals/{id}/decide': { decision: 'approve', note: 'System sweep' },
+    'POST /api/v1/integrations/{id}/connect': { credentials: { token: 'test-token' } },
+    'POST /api/v1/files': { name: 'sweep.txt', mimeType: 'text/plain', dataBase64: 'c3dlZXA=' },
+    'POST /api/v1/conversations/{id}/reply': { text: 'System sweep reply' },
+    'POST /api/v1/conversations/{id}/notes': { text: 'System sweep note' },
+    'POST /api/v1/conversations/{id}/drafts': { text: 'System sweep draft' },
+    'POST /api/v1/channels/{channel}/message': { to: '+233000000000', text: 'System sweep message' },
+    'POST /api/v1/customers/{id}/notes': { text: 'System sweep note' },
+    'POST /api/v1/invoices/{id}/reminder': { message: 'System sweep reminder', channel: 'email' },
+    'POST /api/v1/payments/{id}/verify': { provider: 'paystack' },
+    'POST /api/v1/products/{id}/adjust': { delta: 1, reason: 'System sweep' },
+    'POST /api/v1/workflows/{id}/dry-run': { conditions: [], actions: [], payload: {} },
+    'POST /api/v1/workflows/{id}/test': { payload: {} },
+    'POST /api/v1/agents/{id}/configure': { automationLevel: 'suggest', dailyLimit: 5 },
+    'PUT /api/v1/agents/{id}/tools/{tool}': { enabled: false },
+    'PUT /api/v1/notifications/preferences': { preferences: { inApp: true } },
+    'PUT /api/v1/roles/{id}/permissions': { permissions: { 'customers:read': true } },
+    'POST /api/v1/analytics/summary': { range: '7d' }
+  };
+}
 
 test('system: registered API routes and OpenAPI document are in exact parity', async (t) => {
   const env = await startTestApp();
@@ -123,13 +126,14 @@ test('system: every documented operation responds without a routing or server er
   const sessionId = sessions.body.data[0]?.id || '';
 
   const operations = documentedOperations().filter((operation) => operation.template !== '/api/v1/auth/logout');
+  const requestBodies = bodies(env.fixtures);
   const statusCounts = {};
   const failures = [];
   for (const operation of operations) {
     const key = `${operation.method} ${operation.template}`;
     const endpoint = relativeEndpoint(concretePath(operation.template, data, sessionId, operation.method));
     const options = { method: operation.method, token };
-    if (operation.method !== 'GET' && operation.method !== 'DELETE') options.body = BODIES[key] || {};
+    if (operation.method !== 'GET' && operation.method !== 'DELETE') options.body = requestBodies[key] || {};
     const result = await api(env.base, endpoint, options);
     statusCounts[result.status] = (statusCounts[result.status] || 0) + 1;
     const contentType = String(result.headers.get('content-type') || '');
@@ -262,6 +266,7 @@ test('system: every UI trigger has a handler and every called API method is expo
 });
 
 test('system: every frontend route renders in a real DOM without errors', async (t) => {
+  const fixtures = createFixtures();
   const html = fs.readFileSync(path.join(root, 'interface/index.html'), 'utf8');
   const dom = new JSDOM(html, { url: 'http://localhost:4000/', runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
@@ -285,12 +290,13 @@ test('system: every frontend route renders in a real DOM without errors', async 
     const NX = window.NX;
     assert.ok(App && NX, 'frontend must expose App and NX globals');
     assert.equal(Object.prototype.toString.call(NX), '[object Object]');
+    window.NXApi.applyBootstrap(nxPayload(fixtures));
     assert.equal(window.NX, NX, 'bootstrap must never replace the NX object');
 
-    App.config = { demoMode: true };
+    App.config = { demoMode: false };
     App.applyIdentity(
-      { employeeId: 'e1', role: 'owner', id: 'e1' },
-      { businessId: NX.business.id, role: 'owner' },
+      { employeeId: fixtures.ownerEmployeeId, role: 'owner', id: fixtures.ownerEmployeeId },
+      { businessId: fixtures.businessId, role: 'owner' },
       PERMISSIONS
     );
     App.signedIn = true;
@@ -299,13 +305,13 @@ test('system: every frontend route renders in a real DOM without errors', async 
     const routes = [];
     for (const page of Object.keys(App.views)) if (page !== 'auth') routes.push(`#/${page}`);
     for (const special of [
-      '#/inbox/v1', '#/customers/c/c1', '#/sales/activities', '#/sales/reports',
-      '#/orders/o/ORD-10473', '#/inventory/movements', '#/inventory/suppliers',
-      '#/inventory/requests', '#/inventory/p/p1', '#/finance/payments',
-      '#/finance/expenses', '#/finance/summary', '#/finance/invoices/INV-2611',
+      `#/inbox/${fixtures.conversationId}`, `#/customers/c/${fixtures.customerId}`, '#/sales/activities', '#/sales/reports',
+      `#/orders/o/${fixtures.orderId}`, '#/inventory/movements', '#/inventory/suppliers',
+      '#/inventory/requests', `#/inventory/p/${fixtures.productId}`, '#/finance/payments',
+      '#/finance/expenses', '#/finance/summary', `#/finance/invoices/${fixtures.invoiceId}`,
       '#/employees/departments', '#/employees/roles', '#/automation/history',
-      '#/automation/w/w2', '#/automation/new', '#/agents/approvals',
-      '#/agents/history', '#/agents/a/a1', '#/analytics/communication',
+      `#/automation/w/${fixtures.workflowId}`, '#/automation/new', '#/agents/approvals',
+      '#/agents/history', `#/agents/a/${fixtures.agentId}`, '#/analytics/communication',
       '#/analytics/people', '#/settings/notifications', '#/settings/security',
       '#/settings/apps', '#/settings/audit', '#/settings/data', '#/settings/appearance'
     ]) routes.push(special);
@@ -317,9 +323,9 @@ test('system: every frontend route renders in a real DOM without errors', async 
       const content = window.document.getElementById('content');
       assert.ok(content && content.innerHTML.length > 50, `${route} rendered empty content`);
       assert.ok(!/undefined|\[object Object\]/.test(content.innerHTML.slice(0, 4000)), `${route} rendered broken values`);
-      if (route === '#/finance/invoices/INV-2611') {
+      if (route === `#/finance/invoices/${fixtures.invoiceId}`) {
         const drawer = window.document.getElementById('overlay').innerHTML;
-        assert.ok(drawer.includes('INV-2611'), 'invoice deep link must open the invoice drawer');
+        assert.ok(drawer.includes(fixtures.invoiceId), 'invoice deep link must open the invoice drawer');
         assert.ok(drawer.includes('Outstanding balance'), 'invoice drawer must show the balance');
       }
       rendered.push(route);
@@ -327,13 +333,13 @@ test('system: every frontend route renders in a real DOM without errors', async 
 
     window.location.hash = '#/finance';
     App.render();
-    assert.ok(window.document.getElementById('content').innerHTML.includes('#/finance/invoices/INV-2611'),
+    assert.ok(window.document.getElementById('content').innerHTML.includes(`#/finance/invoices/${fixtures.invoiceId}`),
       'invoice IDs in the Finance table must link to the invoice detail route');
 
     for (const mode of ['login', 'register', 'forgot', 'reset']) {
       window.location.hash = `#/auth/${mode}`;
       App.signedIn = false;
-      App.config = { demoMode: true };
+      App.config = { demoMode: false };
       App.render();
       const authContent = window.document.getElementById('root').innerHTML;
       assert.ok(authContent.length > 100, `auth/${mode} rendered empty content`);

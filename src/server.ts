@@ -1,5 +1,5 @@
+import './core/env.js';
 import { createApp } from './app.js';
-import { runtimeConfig } from './core/config.js';
 
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '0.0.0.0';
@@ -8,9 +8,7 @@ const app = await createApp();
 
 app.server.listen(port, host, () => {
   console.log(`[Nexora] API and web client listening on http://${host}:${port}`);
-  if (runtimeConfig().demoMode) {
-    console.log('[Nexora] Demo sign-in: owner@example.test / redacted-password');
-  }
+  console.log('[Nexora] Register a workspace from the sign-in screen to get started.');
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

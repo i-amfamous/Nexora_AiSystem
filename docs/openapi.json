@@ -162,7 +162,7 @@
   "paths": {
     "/api/v1/config": {
       "get": {
-        "summary": "Public runtime configuration and demo-mode status",
+        "summary": "Public runtime configuration including production and demoMode flags",
         "tags": [
           "system"
         ],

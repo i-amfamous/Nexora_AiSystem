@@ -66,7 +66,7 @@ test('signed webhooks, realtime events, AI approvals and audit trail', async (t)
       }
     });
   });
-  const reply = await api(env.base, '/conversations/v1/reply', {
+  const reply = await api(env.base, `/conversations/${env.fixtures.conversationId}/reply`, {
     method: 'POST',
     token: session.token,
     body: { text: 'We have checked the current stock for you.' }
@@ -74,7 +74,7 @@ test('signed webhooks, realtime events, AI approvals and audit trail', async (t)
   assert.equal(reply.status, 201);
   const realtime = await eventPromise;
   assert.equal(realtime.businessId, session.businessId);
-  assert.equal(realtime.payload.conversationId, 'v1');
+  assert.equal(realtime.payload.conversationId, env.fixtures.conversationId);
   socket.close();
 
   const run = await api(env.base, '/agents/inventory/run', {

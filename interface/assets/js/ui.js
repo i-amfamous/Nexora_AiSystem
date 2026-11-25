@@ -190,6 +190,14 @@
     (scope || document).querySelectorAll('.chart[data-chart]').forEach(function (el) {
       var spec = UI.charts[el.getAttribute('data-chart')];
       if (!spec) return;
+      var labels = Array.isArray(spec.labels) ? spec.labels : [];
+      var series = Array.isArray(spec.series) ? spec.series.filter(function (s) { return s && Array.isArray(s.values); }) : [];
+      if (!labels.length || !series.length || !series[0].values.length) {
+        el.innerHTML = '<div class="empty small">No data yet</div>';
+        return;
+      }
+      spec.labels = labels;
+      spec.series = series;
       var W = el.clientWidth, H = el.clientHeight;
       if (!W) return;
       var padL = 44, padR = 8, padT = 10, padB = 26;
@@ -296,7 +304,9 @@
   };
 
   UI.hbars = function (rows, fmt) {
-    var max = Math.max.apply(null, rows.map(function (r) { return r[1]; }));
+    rows = Array.isArray(rows) ? rows : [];
+    var max = rows.length ? Math.max.apply(null, rows.map(function (r) { return Number(r[1]) || 0; })) : 0;
+    if (max <= 0) return '<div class="empty small">No data yet</div>';
     return '<div class="hbars">' + rows.map(function (r) {
       return '<div class="hbar"><span class="ellipsis">' + UI.esc(r[0]) + '</span><span class="track"><i style="width:' + (r[1] / max * 100).toFixed(1) + '%"></i></span><span class="v">' + (fmt ? fmt(r[1]) : r[1]) + '</span></div>';
     }).join('') + '</div>';
